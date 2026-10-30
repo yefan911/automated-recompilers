@@ -81,7 +81,8 @@ class ControlFlowGraph:
         lines = [
             "/* Global Dispatch Trampoline */",
             "uint32_t recomp_dispatch(ArmCpuContext* ctx, uint32_t target_vram) {",
-            "    switch (target_vram) {",
+            "    uint32_t clean_target = target_vram & ~1; /* strip Thumb bit */",
+            "    switch (clean_target) {",
         ]
         for b in self.sorted_blocks():
             lines.append(f"        case 0x{b.start_vram:08X}: return {b.func_name}(ctx);")

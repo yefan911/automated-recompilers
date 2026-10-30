@@ -14,6 +14,7 @@ from typing import List, Dict, Any, Tuple, Optional
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from src.lifter.cfg import BasicBlock, ControlFlowGraph
+from src.lifter.thumb_lifter import ThumbLifter
 
 
 class ArmLifter:
@@ -59,6 +60,11 @@ class ArmLifter:
             # 1. Branch and Exchange (BX): 0x012FFF10..
             if (raw_instr & 0x0FFFFFF0) == 0x012FFF10:
                 rm = raw_instr & 0xF
+                # Check if register value is known statically from previous instruction
+                for prev in reversed(ir_ops):
+                    if prev.get("rd") == rm and "val" in prev:
+                        targets.append(prev["val"])
+                        break
                 ir_ops.append({
                     "pc": instr_pc,
                     "op": "BX",
@@ -295,19 +301,28 @@ class ArmLifter:
     def build_cfg(self, entry_vram: int = 0x08000000) -> ControlFlowGraph:
         """
         Traces and constructs all reachable Basic Blocks via recursive descent
-        from the specified entry point.
+        from the specified entry point, seamlessly handling both 32-bit ARM mode
+        and 16-bit Thumb mode when targets have bit 0 set.
         """
         cfg = ControlFlowGraph(entry_vram)
         worklist = [entry_vram]
         visited = set()
+        thumb_lifter = ThumbLifter(self.rom, self.base_vram)
 
         while worklist:
-            vram = worklist.pop(0)
+            raw_vram = worklist.pop(0)
+            is_thumb = bool(raw_vram & 1)
+            vram = raw_vram & ~1
+
             if vram in visited or not self.is_valid_vram(vram):
                 continue
             visited.add(vram)
 
-            ops, targets = self.lift_block(vram)
+            if is_thumb:
+                ops, targets = thumb_lifter.lift_block(vram)
+            else:
+                ops, targets = self.lift_block(vram)
+
             block = BasicBlock(
                 start_vram=vram,
                 end_vram=ops[-1]["pc"] if ops else vram,
@@ -318,7 +333,8 @@ class ArmLifter:
             cfg.add_block(block)
 
             for target in targets:
-                if target not in visited and self.is_valid_vram(target):
+                clean_target = target & ~1
+                if clean_target not in visited and self.is_valid_vram(clean_target):
                     worklist.append(target)
 
         return cfg
@@ -487,25 +503,26 @@ def lift_rom_to_c(rom_path: str, entry_point: int = 0x08000000) -> str:
         '#endif',
         '',
         '/* Main Entry / Native Recompiled Executable */',
+        'static ArmCpuContext s_ctx;',
         'int main(int argc, char** argv) {',
         '    (void)argc;',
         '    (void)argv;',
         '    printf("=== Starting Automated Recompiled Game ===\\n");',
-        '    ArmCpuContext ctx = {0};',
+        '    ArmCpuContext* ctx = &s_ctx;',
         '    ',
         f'    uint32_t next_pc = 0x{entry_point:08X};',
         '    int max_cycles = 100000;',
         '    while (max_cycles-- > 0 && next_pc != 0) {',
-        '        next_pc = recomp_dispatch(&ctx, next_pc);',
+        '        next_pc = recomp_dispatch(ctx, next_pc);',
         '    }',
         '    ',
         '    printf("=== Recompiled execution finished successfully ===\\n");',
-        '    printf("  * REG_DISPCNT  : 0x%04X (Mode %d)\\n", ctx.dispcnt, ctx.dispcnt & 7);',
-        '    printf("  * Pixels Drawn : %u pixels written to VRAM\\n", ctx.pixels_written);',
+        '    printf("  * REG_DISPCNT  : 0x%04X (Mode %d)\\n", ctx->dispcnt, ctx->dispcnt & 7);',
+        '    printf("  * Pixels Drawn : %u pixels written to VRAM\\n", ctx->pixels_written);',
         '    ',
         '#ifdef _WIN32',
         '    if (argc > 1 && strcmp(argv[1], "--window") == 0) {',
-        '        run_presentation_window(&ctx);',
+        '        run_presentation_window(ctx);',
         '    }',
         '#endif',
         '    return 0;',
