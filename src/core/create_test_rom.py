@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
-Generates a minimal, valid Game Boy Advance (GBA) test ROM.
-Sets Display Control to Mode 3 (16-bit direct color bitmap) and draws
-a color pattern into VRAM (0x06000000) before entering an idle loop.
+Enhanced GBA Test ROM Generator
+Generates a multi-block GBA ROM with loops, subroutines, conditional branches,
+and VRAM bitmap pattern rendering in Mode 3 (240x160 16-bit color).
 """
 
 import struct
 
-# Official Nintendo Logo required in bytes 0x04..0x9F for GBA BIOS verification
 NINTENDO_GBA_LOGO = bytes([
     0x24, 0xFF, 0xAE, 0x51, 0x69, 0x9A, 0xA2, 0x21, 0x3D, 0x84, 0x82, 0x0A, 0x84, 0xE4, 0x09, 0xAD,
     0x11, 0x24, 0x8B, 0x98, 0xC0, 0x81, 0x7F, 0x21, 0xA3, 0x52, 0xBE, 0x19, 0x93, 0x09, 0xCE, 0x22,
@@ -21,70 +20,83 @@ NINTENDO_GBA_LOGO = bytes([
     0xB0, 0x42, 0x70, 0xA7, 0x26, 0x43, 0x5F, 0x12
 ])
 
-def create_gba_test_rom(output_path: str = "roms/test/hello_gba.gba"):
-    rom = bytearray(0x200) # 512 bytes minimal test ROM
+def create_enhanced_gba_rom(output_path: str = "roms/test/hello_gba.gba"):
+    rom = bytearray(0x400) # 1024 bytes ROM
 
-    # 1. 0x00..0x03: Branch instruction to 0x080000C0
-    # ARM instruction: b 0x080000C0
-    # Target offset = (0xC0 - 8) / 4 = 0x2E. Opcode = 0xEA00002E
+    # 1. Branch to 0x080000C0
     rom[0x00:0x04] = struct.pack("<I", 0xEA00002E)
 
-    # 2. 0x04..0x9F: Nintendo Logo
+    # 2. Header
     rom[0x04:0x04 + len(NINTENDO_GBA_LOGO)] = NINTENDO_GBA_LOGO
-
-    # 3. 0xA0..0xAB: Title (12 chars)
-    title = b"TEST RECOMP\x00"
-    rom[0xA0:0xA0 + len(title)] = title
-
-    # 4. 0xAC..0xAF: Game Code
+    rom[0xA0:0xAC] = b"TEST RECOMP\x00"
     rom[0xAC:0xB0] = b"TREC"
-
-    # 5. 0xB0..0xB1: Maker Code
     rom[0xB0:0xB2] = b"01"
-
-    # 6. Fixed bytes
     rom[0xB2] = 0x96
     rom[0xB3] = 0x00
     rom[0xB4] = 0x00
-    rom[0xBC] = 0x00 # Version
+    rom[0xBC] = 0x00
 
-    # 7. Checksum calculation over 0xA0..0xBC:
     chk = 0
     for b in rom[0xA0:0xBD]:
         chk = (chk - b) & 0xFF
     chk = (chk - 0x19) & 0xFF
     rom[0xBD] = chk
 
-    # 8. Executable Code starting at offset 0xC0 (0x080000C0 in GBA VRAM space):
-    # ARM instructions (32-bit little endian):
-    code = [
-        # mov r0, #0x04000000  (REG_DISPCNT address: 4 ror 8)
-        0xE3A00404,
-        # ldr r1, [pc, #16]    (Loads 0x00000403 from 0xDC)
-        0xE59F1010,
-        # strh r1, [r0]        (Set DISPCNT)
-        0xE1C010B0,
-        # mov r2, #0x06000000  (VRAM Base address: 6 ror 8)
-        0xE3A02406,
-        # ldr r3, [pc, #8]     (Loads 0x0000001F from 0xE0)
-        0xE59F3008,
-        # strh r3, [r2]        (Write red pixel to VRAM[0])
-        0xE1C230B0,
-        # loop: b loop         (Spin forever)
-        0xEAFFFFFE,
-        # Constants pool:
-        0x00000403,  # Constant for DISPCNT (at 0xDC)
-        0x0000001F,  # Constant for Red Pixel (at 0xE0)
+    # 3. Main Routine starting at 0x080000C0:
+    # 0xC0: mov r0, #0x04000000  (REG_DISPCNT address)
+    # 0xC4: ldr r1, [pc, #32]    (Load 0x0403 from 0xEC)
+    # 0xC8: strh r1, [r0]        (Set Mode 3 | BG2 Enable)
+    # 0xCC: bl 0x08000100        (Call draw_pattern subroutine)
+    # 0xD0: spin: b spin         (Infinite loop when done)
+    main_code = [
+        0xE3A00404,  # mov r0, #0x04000000
+        0xE59F1020,  # ldr r1, [pc, #32] -> from 0xC4 (PC=0xCC) to 0xEC
+        0xE1C010B0,  # strh r1, [r0]
+        0xEB00000B,  # bl 0x08000100 (from 0xCC, PC=0xD4. offset = (0x100 - 0xD4)/4 = 44/4 = 11 = 0xB)
+        0xEAFFFFFE,  # spin: b spin
     ]
 
-    offset = 0xC0
-    for instr in code:
-        rom[offset:offset+4] = struct.pack("<I", instr)
-        offset += 4
+    for i, instr in enumerate(main_code):
+        rom[0xC0 + i*4 : 0xC4 + i*4] = struct.pack("<I", instr)
+
+    # Constant at 0xEC:
+    rom[0xEC:0xF0] = struct.pack("<I", 0x00000403)
+
+    # 4. Subroutine draw_pattern at 0x08000100:
+    # 0x100: mov r0, #0x06000000 (VRAM pointer: 6 ror 8)
+    # 0x104: ldr r1, [pc, #28]   (Load pixel count 2400 from 0x128)
+    # 0x108: mov r2, #0x001F     (Color: Red)
+    # Loop body:
+    # 0x10C: strh r2, [r0]       (Write pixel)
+    # 0x110: add r0, r0, #2      (Next pixel offset)
+    # 0x114: add r2, r2, #1      (Increment color)
+    # 0x118: subs r1, r1, #1     (Decrement count and set flags)
+    # 0x11C: bne 0x0800010C      (Loop if r1 != 0)
+    # 0x120: bx lr               (Return)
+    sub_code = [
+        0xE3A00406,  # 0x100: mov r0, #0x06000000
+        0xE59F101C,  # 0x104: ldr r1, [pc, #28] -> from 0x104 (PC=0x10C) to 0x128
+        0xE3A0201F,  # 0x108: mov r2, #0x001F
+        0xE1C020B0,  # 0x10C: strh r2, [r0]
+        0xE2800002,  # 0x110: add r0, r0, #2
+        0xE2822001,  # 0x114: add r2, r2, #1
+        0xE2511001,  # 0x118: subs r1, r1, #1
+        0x1AFFFFFA,  # 0x11C: bne 0x0800010C (offset = -6)
+        0xE12FFF1E,  # 0x120: bx lr (return)
+    ]
+
+    for i, instr in enumerate(sub_code):
+        rom[0x100 + i*4 : 0x104 + i*4] = struct.pack("<I", instr)
+
+    # Constant at 0x128: Pixel count = 2400 (first 10 full lines of 240 pixels)
+    rom[0x128:0x12C] = struct.pack("<I", 2400)
 
     with open(output_path, "wb") as f:
         f.write(rom)
-    print(f"Generated test GBA ROM at: {output_path} ({len(rom)} bytes)")
+    print(f"Generated enhanced GBA test ROM at {output_path} ({len(rom)} bytes)")
+
+# Alias for backwards compatibility
+create_gba_test_rom = create_enhanced_gba_rom
 
 if __name__ == "__main__":
-    create_gba_test_rom()
+    create_enhanced_gba_rom()

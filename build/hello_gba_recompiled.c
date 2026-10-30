@@ -3,17 +3,43 @@
 #include <stdio.h>
 
 typedef struct {
-    uint32_t r[16];   /* r0-r15 registers (r13=SP, r14=LR, r15=PC) */
-    uint32_t cpsr;    /* Status register */
-    uint8_t  vram[0x18000]; /* 96KB GBA VRAM */
-    uint16_t dispcnt; /* Display control MMIO */
+    uint32_t r[16];          /* r0-r15 registers (r13=SP, r14=LR, r15=PC) */
+    uint32_t cpsr;           /* Status register */
+    uint8_t  ewram[0x40000]; /* 256KB EWRAM */
+    uint8_t  iwram[0x8000];  /* 32KB IWRAM */
+    uint8_t  vram[0x18000];  /* 96KB VRAM */
+    uint16_t dispcnt;        /* Display control MMIO */
 } ArmCpuContext;
 
-/* Hardware Bus Shims */
+/* Hardware Memory Bus Shims */
+static inline uint8_t mem_read8(ArmCpuContext* ctx, uint32_t addr) {
+    if (addr >= 0x02000000 && addr < 0x02040000) return ctx->ewram[addr - 0x02000000];
+    if (addr >= 0x03000000 && addr < 0x03008000) return ctx->iwram[addr - 0x03000000];
+    if (addr >= 0x06000000 && addr < 0x06018000) return ctx->vram[addr - 0x06000000];
+    return 0;
+}
+
+static inline void mem_write8(ArmCpuContext* ctx, uint32_t addr, uint8_t val) {
+    if (addr >= 0x02000000 && addr < 0x02040000) ctx->ewram[addr - 0x02000000] = val;
+    else if (addr >= 0x03000000 && addr < 0x03008000) ctx->iwram[addr - 0x03000000] = val;
+    else if (addr >= 0x06000000 && addr < 0x06018000) ctx->vram[addr - 0x06000000] = val;
+}
+
+static inline uint16_t mem_read16(ArmCpuContext* ctx, uint32_t addr) {
+    if (addr >= 0x02000000 && addr < 0x02040000) return *(uint16_t*)&ctx->ewram[addr - 0x02000000];
+    if (addr >= 0x03000000 && addr < 0x03008000) return *(uint16_t*)&ctx->iwram[addr - 0x03000000];
+    if (addr >= 0x06000000 && addr < 0x06018000) return *(uint16_t*)&ctx->vram[addr - 0x06000000];
+    return 0;
+}
+
 static inline void mem_write16(ArmCpuContext* ctx, uint32_t addr, uint16_t val) {
     if (addr == 0x04000000) {
         ctx->dispcnt = val;
         printf("[GBA HAL] REG_DISPCNT set to 0x%04X (Mode %d)\n", val, val & 7);
+    } else if (addr >= 0x02000000 && addr < 0x02040000) {
+        *(uint16_t*)&ctx->ewram[addr - 0x02000000] = val;
+    } else if (addr >= 0x03000000 && addr < 0x03008000) {
+        *(uint16_t*)&ctx->iwram[addr - 0x03000000] = val;
     } else if (addr >= 0x06000000 && addr < 0x06018000) {
         uint32_t offset = addr - 0x06000000;
         *(uint16_t*)&ctx->vram[offset] = val;
@@ -22,14 +48,24 @@ static inline void mem_write16(ArmCpuContext* ctx, uint32_t addr, uint16_t val) 
 }
 
 static inline uint32_t mem_read32(ArmCpuContext* ctx, uint32_t addr) {
-    (void)ctx;
-    (void)addr;
+    if (addr >= 0x02000000 && addr < 0x02040000) return *(uint32_t*)&ctx->ewram[addr - 0x02000000];
+    if (addr >= 0x03000000 && addr < 0x03008000) return *(uint32_t*)&ctx->iwram[addr - 0x03000000];
+    if (addr >= 0x06000000 && addr < 0x06018000) return *(uint32_t*)&ctx->vram[addr - 0x06000000];
     return 0;
 }
 
+static inline void mem_write32(ArmCpuContext* ctx, uint32_t addr, uint32_t val) {
+    if (addr >= 0x02000000 && addr < 0x02040000) *(uint32_t*)&ctx->ewram[addr - 0x02000000] = val;
+    else if (addr >= 0x03000000 && addr < 0x03008000) *(uint32_t*)&ctx->iwram[addr - 0x03000000] = val;
+    else if (addr >= 0x06000000 && addr < 0x06018000) *(uint32_t*)&ctx->vram[addr - 0x06000000] = val;
+}
+
 /* Basic Block Prototypes */
+uint32_t recomp_dispatch(ArmCpuContext* ctx, uint32_t target_vram);
 uint32_t bb_08000000(ArmCpuContext* ctx);
 uint32_t bb_080000C0(ArmCpuContext* ctx);
+uint32_t bb_08000100(ArmCpuContext* ctx);
+uint32_t bb_0800010C(ArmCpuContext* ctx);
 
 /* Basic Block 0x08000000 - 0x08000000 */
 uint32_t bb_08000000(ArmCpuContext* ctx) {
@@ -37,16 +73,51 @@ uint32_t bb_08000000(ArmCpuContext* ctx) {
     return 0x080000C0; /* branch to 0x080000C0 */
 }
 
-/* Basic Block 0x080000C0 - 0x080000D8 */
+/* Basic Block 0x080000C0 - 0x080000D0 */
 uint32_t bb_080000C0(ArmCpuContext* ctx) {
     (void)ctx;
     ctx->r[0] = 0x04000000;
-    ctx->r[1] = 0x00000403; /* loaded from 0x080000DC */
+    ctx->r[1] = 0x00000403; /* loaded from 0x080000EC */
     mem_write16(ctx, ctx->r[0], (uint16_t)ctx->r[1]);
-    ctx->r[2] = 0x06000000;
-    ctx->r[3] = 0x0000001F; /* loaded from 0x080000E0 */
-    mem_write16(ctx, ctx->r[2], (uint16_t)ctx->r[3]);
+    ctx->r[14] = 0x080000D0;
+    recomp_dispatch(ctx, 0x08000100);
     return 0x00000000; /* infinite loop halt */
+}
+
+/* Basic Block 0x08000100 - 0x0800011C */
+uint32_t bb_08000100(ArmCpuContext* ctx) {
+    (void)ctx;
+    ctx->r[0] = 0x06000000;
+    ctx->r[1] = 0x00000960; /* loaded from 0x08000128 */
+    ctx->r[2] = 0x0000001F;
+    mem_write16(ctx, ctx->r[0], (uint16_t)ctx->r[2]);
+    ctx->r[0] = ctx->r[0] + 0x00000002;
+    ctx->r[2] = ctx->r[2] + 0x00000001;
+    ctx->r[1] = ctx->r[1] - 0x00000001;
+    return 0x0800010C; /* branch to 0x0800010C */
+}
+
+/* Basic Block 0x0800010C - 0x0800011C */
+uint32_t bb_0800010C(ArmCpuContext* ctx) {
+    (void)ctx;
+    mem_write16(ctx, ctx->r[0], (uint16_t)ctx->r[2]);
+    ctx->r[0] = ctx->r[0] + 0x00000002;
+    ctx->r[2] = ctx->r[2] + 0x00000001;
+    ctx->r[1] = ctx->r[1] - 0x00000001;
+    return 0x0800010C; /* branch to 0x0800010C */
+}
+
+/* Global Dispatch Trampoline */
+uint32_t recomp_dispatch(ArmCpuContext* ctx, uint32_t target_vram) {
+    switch (target_vram) {
+        case 0x08000000: return bb_08000000(ctx);
+        case 0x080000C0: return bb_080000C0(ctx);
+        case 0x08000100: return bb_08000100(ctx);
+        case 0x0800010C: return bb_0800010C(ctx);
+        default:
+            printf("[Recomp Dispatch] Halt at unmapped / halt jump target 0x%08X\n", target_vram);
+            return 0;
+    }
 }
 
 /* Main Entry / Native Recompiled Executable */
@@ -57,16 +128,7 @@ int main(int argc, char** argv) {
     ArmCpuContext ctx = {0};
     
     uint32_t next_pc = 0x08000000;
-    int max_steps = 10;
-    while (max_steps-- > 0 && next_pc != 0) {
-        switch (next_pc) {
-            case 0x08000000: next_pc = bb_08000000(&ctx); break;
-            case 0x080000C0: next_pc = bb_080000C0(&ctx); break;
-            default:
-                printf("Reached unmapped / halt jump target 0x%08X\n", next_pc);
-                return 0;
-        }
-    }
+    recomp_dispatch(&ctx, next_pc);
     printf("=== Recompiled execution finished successfully ===\n");
     return 0;
 }
