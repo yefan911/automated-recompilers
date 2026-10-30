@@ -63,7 +63,36 @@ class ControlFlowGraph:
         return sorted(self.blocks.values(), key=lambda b: b.start_vram)
 
     def emit_prototypes(self) -> List[str]:
-        return [f"uint32_t {b.func_name}(ArmCpuContext* ctx);" for b in self.sorted_blocks()]
+        protos = [
+            "uint32_t recomp_dispatch(ArmCpuContext* ctx, uint32_t target_vram);",
+            "static inline void recomp_call(ArmCpuContext* ctx, uint32_t target_vram) {",
+            "    uint32_t ret_addr = ctx->r[14];",
+            "    uint32_t next = target_vram;",
+            "    int budget = 500000;",
+            "    while (next != 0 && next != ret_addr && budget-- > 0) {",
+            "        next = recomp_dispatch(ctx, next);",
+            "    }",
+            "}",
+        ]
+        protos.extend([f"uint32_t {b.func_name}(ArmCpuContext* ctx);" for b in self.sorted_blocks()])
+        return protos
+
+    def emit_dispatch_function(self) -> List[str]:
+        lines = [
+            "/* Global Dispatch Trampoline */",
+            "uint32_t recomp_dispatch(ArmCpuContext* ctx, uint32_t target_vram) {",
+            "    switch (target_vram) {",
+        ]
+        for b in self.sorted_blocks():
+            lines.append(f"        case 0x{b.start_vram:08X}: return {b.func_name}(ctx);")
+        lines.extend([
+            "        default:",
+            '            printf("[Recomp Dispatch] Halt at unmapped / halt jump target 0x%08X\\n", target_vram);',
+            "            return 0;",
+            "    }",
+            "}\n",
+        ])
+        return lines
 
     def emit_dispatch_switch(self) -> List[str]:
         lines = ["    switch (next_pc) {"]
