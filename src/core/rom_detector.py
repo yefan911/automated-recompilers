@@ -32,14 +32,14 @@ def detect_gba(data: bytes) -> Optional[Dict[str, Any]]:
             "console": "Game Boy Advance (GBA)",
             "architecture": "ARM7TDMI (32-bit ARM + 16-bit Thumb)",
             "endianness": "little",
-            "entry_point": 0x08000000,
+            "entry_point": "0x08000000",
             "title": title,
             "game_code": game_code,
             "maker_code": maker_code,
             "version": version,
             "checksum": hex(checksum),
             "size_bytes": len(data),
-            "rom_mapped_vram": 0x08000000,
+            "rom_mapped_vram": "0x08000000",
         }
     return None
 

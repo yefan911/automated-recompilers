@@ -158,6 +158,8 @@ def lift_rom_to_c(rom_path: str) -> str:
         '}',
         '',
         'static inline uint32_t mem_read32(ArmCpuContext* ctx, uint32_t addr) {',
+        '    (void)ctx;',
+        '    (void)addr;',
         '    return 0;',
         '}',
         '',
@@ -178,6 +180,8 @@ def lift_rom_to_c(rom_path: str) -> str:
     c_source.extend([
         '/* Main Entry / Native Recompiled Executable */',
         'int main(int argc, char** argv) {',
+        '    (void)argc;',
+        '    (void)argv;',
         '    printf("=== Starting Automated Recompiled Game ===\\n");',
         '    ArmCpuContext ctx = {0};',
         '    ',

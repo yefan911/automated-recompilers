@@ -22,6 +22,8 @@ static inline void mem_write16(ArmCpuContext* ctx, uint32_t addr, uint16_t val) 
 }
 
 static inline uint32_t mem_read32(ArmCpuContext* ctx, uint32_t addr) {
+    (void)ctx;
+    (void)addr;
     return 0;
 }
 
@@ -43,6 +45,8 @@ uint32_t bb_080000C0(ArmCpuContext* ctx) {
 
 /* Main Entry / Native Recompiled Executable */
 int main(int argc, char** argv) {
+    (void)argc;
+    (void)argv;
     printf("=== Starting Automated Recompiled Game ===\n");
     ArmCpuContext ctx = {0};
     
