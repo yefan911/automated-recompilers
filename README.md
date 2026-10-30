@@ -6,6 +6,21 @@ Unlike traditional emulators that reinterpret or JIT-compile instructions at run
 
 ---
 
+## Standalone Executable (`recompiler.exe`)
+
+You can package the entire automated recompilation framework into a standalone binary that does not require Python:
+
+```bash
+# Package into dist/recompiler.exe
+python package_exe.py
+
+# Run the standalone binary directly:
+.\dist\recompiler.exe roms/test/hello_gba.gba
+.\dist\recompiler.exe --blocks roms/test/hello_gba.gba
+```
+
+---
+
 ## Directory Structure
 
 ```
