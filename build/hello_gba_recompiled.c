@@ -29,11 +29,13 @@ static inline uint32_t mem_read32(ArmCpuContext* ctx, uint32_t addr) {
 
 /* Basic Block 0x08000000 */
 uint32_t bb_08000000(ArmCpuContext* ctx) {
+    (void)ctx;
     return 0x080000C0; /* branch to 0x080000C0 */
 }
 
 /* Basic Block 0x080000C0 */
 uint32_t bb_080000C0(ArmCpuContext* ctx) {
+    (void)ctx;
     ctx->r[0] = 0x04000000;
     ctx->r[1] = 0x00000403; /* loaded from 0x080000DC */
     mem_write16(ctx, ctx->r[0], (uint16_t)ctx->r[1]);
