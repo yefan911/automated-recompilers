@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from src.core.rom_detector import inspect_file, scan_roms_directory
 from src.lifter.arm_lifter import lift_rom_to_c
+from src.core.block_analyzer import BlockDataAnalyzer
 
 def main():
     if len(sys.argv) < 2:
@@ -23,10 +24,23 @@ def main():
         print("========================================================\n")
         print("No ROM specified. Scanning roms/ directory for available games:\n")
         scan_roms_directory("roms")
-        print("\nTo recompile a ROM, run:")
-        print("    python recompile.py roms/test/hello_gba.gba")
-        print("    python recompile.py roms/gba/your_game.gba")
-        print("    python recompile.py roms/n64/your_game.z64\n")
+        print("\nCommands:")
+        print("    python recompile.py <rom_path>           # Lift ROM and emit C source")
+        print("    python recompile.py --blocks <rom_path>  # Inspect CFG basic blocks & entropy map\n")
+        return
+
+    # Check for --blocks flag
+    if sys.argv[1] in ("--blocks", "-b", "--inspect"):
+        if len(sys.argv) < 3:
+            print("Error: Please provide a ROM path after --blocks, e.g.:")
+            print("    python recompile.py --blocks roms/n64/Yoshi.z64")
+            return
+        target = sys.argv[2]
+        analyzer = BlockDataAnalyzer(target)
+        analyzer.print_structural_blocks()
+        analyzer.inspect_hex_block(0x1000, 64)
+        analyzer.disassemble_basic_blocks(0x1000, 0x80200400, max_blocks=3)
+        analyzer.scan_entropy_map(chunk_size=65536, max_chunks=16)
         return
 
     rom_path = sys.argv[1]

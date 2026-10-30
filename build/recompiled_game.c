@@ -22,16 +22,20 @@ static inline void mem_write16(ArmCpuContext* ctx, uint32_t addr, uint16_t val) 
 }
 
 static inline uint32_t mem_read32(ArmCpuContext* ctx, uint32_t addr) {
+    (void)ctx;
+    (void)addr;
     return 0;
 }
 
 /* Basic Block 0x08000000 */
 uint32_t bb_08000000(ArmCpuContext* ctx) {
+    (void)ctx;
     return 0x080000C0; /* branch to 0x080000C0 */
 }
 
 /* Basic Block 0x080000C0 */
 uint32_t bb_080000C0(ArmCpuContext* ctx) {
+    (void)ctx;
     ctx->r[0] = 0x04000000;
     ctx->r[1] = 0x00000403; /* loaded from 0x080000DC */
     mem_write16(ctx, ctx->r[0], (uint16_t)ctx->r[1]);
@@ -43,6 +47,8 @@ uint32_t bb_080000C0(ArmCpuContext* ctx) {
 
 /* Main Entry / Native Recompiled Executable */
 int main(int argc, char** argv) {
+    (void)argc;
+    (void)argv;
     printf("=== Starting Automated Recompiled Game ===\n");
     ArmCpuContext ctx = {0};
     

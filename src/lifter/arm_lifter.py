@@ -158,11 +158,14 @@ def lift_rom_to_c(rom_path: str) -> str:
         '}',
         '',
         'static inline uint32_t mem_read32(ArmCpuContext* ctx, uint32_t addr) {',
+        '    (void)ctx;',
+        '    (void)addr;',
         '    return 0;',
         '}',
         '',
         '/* Basic Block 0x08000000 */',
         'uint32_t bb_08000000(ArmCpuContext* ctx) {',
+        '    (void)ctx;',
     ]
 
     for op in entry_ops:
@@ -171,6 +174,7 @@ def lift_rom_to_c(rom_path: str) -> str:
 
     c_source.append('/* Basic Block 0x080000C0 */')
     c_source.append('uint32_t bb_080000C0(ArmCpuContext* ctx) {')
+    c_source.append('    (void)ctx;')
     for op in code_ops:
         c_source.append(f'    {op["c_code"]}')
     c_source.append('}\n')
@@ -178,6 +182,8 @@ def lift_rom_to_c(rom_path: str) -> str:
     c_source.extend([
         '/* Main Entry / Native Recompiled Executable */',
         'int main(int argc, char** argv) {',
+        '    (void)argc;',
+        '    (void)argv;',
         '    printf("=== Starting Automated Recompiled Game ===\\n");',
         '    ArmCpuContext ctx = {0};',
         '    ',
