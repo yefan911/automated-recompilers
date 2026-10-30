@@ -83,7 +83,7 @@ class ArmLifter:
                         "pc": instr_pc,
                         "op": "CALL",
                         "target": target_vram,
-                        "c_code": f"ctx->r[14] = 0x{instr_pc + 4:08X};\n    recomp_dispatch(ctx, 0x{target_vram:08X});"
+                        "c_code": f"ctx->r[14] = 0x{instr_pc + 4:08X};\n    recomp_call(ctx, 0x{target_vram:08X});"
                     })
                 else:
                     # Check for self-loop (b .)
@@ -488,6 +488,8 @@ def lift_rom_to_c(rom_path: str, entry_point: int = 0x08000000) -> str:
         '',
         '/* Main Entry / Native Recompiled Executable */',
         'int main(int argc, char** argv) {',
+        '    (void)argc;',
+        '    (void)argv;',
         '    printf("=== Starting Automated Recompiled Game ===\\n");',
         '    ArmCpuContext ctx = {0};',
         '    ',

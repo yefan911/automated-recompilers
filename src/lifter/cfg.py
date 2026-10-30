@@ -63,7 +63,17 @@ class ControlFlowGraph:
         return sorted(self.blocks.values(), key=lambda b: b.start_vram)
 
     def emit_prototypes(self) -> List[str]:
-        protos = ["uint32_t recomp_dispatch(ArmCpuContext* ctx, uint32_t target_vram);"]
+        protos = [
+            "uint32_t recomp_dispatch(ArmCpuContext* ctx, uint32_t target_vram);",
+            "static inline void recomp_call(ArmCpuContext* ctx, uint32_t target_vram) {",
+            "    uint32_t ret_addr = ctx->r[14];",
+            "    uint32_t next = target_vram;",
+            "    int budget = 500000;",
+            "    while (next != 0 && next != ret_addr && budget-- > 0) {",
+            "        next = recomp_dispatch(ctx, next);",
+            "    }",
+            "}",
+        ]
         protos.extend([f"uint32_t {b.func_name}(ArmCpuContext* ctx);" for b in self.sorted_blocks()])
         return protos
 

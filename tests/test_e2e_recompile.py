@@ -28,8 +28,8 @@ def test_e2e_recompile_cli_rom_file():
         )
         assert result.returncode == 0
         assert "ROM Identification & Header Analysis" in result.stdout
-        assert "Emitted native C source code" in result.stdout
-        assert "Recompilation succeeded!" in result.stdout
+        assert "Emitted recompiled source:" in result.stdout or "Emitted native C source code" in result.stdout
+        assert "RECOMPILATION COMPLETE" in result.stdout or "Recompilation succeeded!" in result.stdout
 
         expected_c = os.path.join("build", "cli_test_recompiled.c")
         assert os.path.isfile(expected_c)

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-Automated Game ROM Recompiler (CLI Entry Point)
+Automated Game ROM Recompiler (Unified CLI)
 
 Usage:
-    python recompile.py                   # Scans roms/ and lists detected ROMs
-    python recompile.py <path_to_rom>     # Lifts ROM and emits native C source into build/
+    python recompile.py                         # Scan roms/ and list detected games
+    python recompile.py <rom_path>              # Recompile ROM and build native .exe
+    python recompile.py --blocks <rom_path>     # Inspect structural blocks & entropy
+    python recompile.py --no-build <rom_path>   # Only emit C source without building
 """
 
 import os
@@ -16,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from src.core.rom_detector import inspect_file, scan_roms_directory
 from src.lifter.arm_lifter import lift_rom_to_c
 from src.core.block_analyzer import BlockDataAnalyzer
+from src.core.native_compiler import compile_c_to_exe
 
 def main():
     if len(sys.argv) < 2:
@@ -25,7 +28,7 @@ def main():
         print("No ROM specified. Scanning roms/ directory for available games:\n")
         scan_roms_directory("roms")
         print("\nCommands:")
-        print("    python recompile.py <rom_path>           # Lift ROM and emit C source")
+        print("    python recompile.py <rom_path>           # Auto-recompile & build native .exe")
         print("    python recompile.py --blocks <rom_path>  # Inspect CFG basic blocks & entropy map\n")
         return
 
@@ -43,36 +46,65 @@ def main():
         analyzer.scan_entropy_map(chunk_size=65536, max_chunks=16)
         return
 
-    rom_path = sys.argv[1]
+    no_build = False
+    args = sys.argv[1:]
+    if "--no-build" in args:
+        no_build = True
+        args.remove("--no-build")
+
+    rom_path = args[0]
     info = inspect_file(rom_path)
     if not info:
         print(f"Error: Could not analyze '{rom_path}'")
         return
 
-    print("\n[1/3] ROM Identification & Header Analysis:")
-    print("-" * 50)
+    print("\n========================================================")
+    print("  [1/4] ROM Identification & Header Analysis")
+    print("========================================================")
     for k, v in info.items():
         if k not in ("path",):
             print(f"  * {k.replace('_', ' ').title()}: {v}")
-    print("-" * 50)
 
     console = info.get("console", "")
     os.makedirs("build", exist_ok=True)
-    out_c_path = os.path.join("build", f"{os.path.splitext(info['filename'])[0]}_recompiled.c")
+    base_name = os.path.splitext(info["filename"])[0]
+    out_c_path = os.path.join("build", f"{base_name}_recompiled.c")
+    out_exe_path = os.path.join("build", f"{base_name}.exe")
 
     if "Game Boy Advance" in console:
-        print("\n[2/3] Lifting ARM7TDMI Machine Code to Intermediate Representation (IR)...")
-        c_code = lift_rom_to_c(rom_path)
+        print("\n========================================================")
+        print("  [2/4] Recursive Control Flow Graph (CFG) Disassembly")
+        print("========================================================")
+        print(f"Traversing execution paths from entry vector {info.get('entry_point')}...")
+        c_code = lift_rom_to_c(rom_path, entry_point=0x08000000)
+
+        print("\n========================================================")
+        print("  [3/4] Native C Code Generation")
+        print("========================================================")
         with open(out_c_path, "w") as f:
             f.write(c_code)
-        print(f"[3/3] Emitted native C source code -> {out_c_path}")
-        print("\nRecompilation succeeded!")
-        print(f"To compile to a native executable on your machine:")
-        print(f"    gcc -O2 {out_c_path} -o build/{os.path.splitext(info['filename'])[0]}.exe")
-        print(f"    clang -O2 {out_c_path} -o build/{os.path.splitext(info['filename'])[0]}.exe\n")
+        print(f"Emitted recompiled source: {out_c_path}")
+
+        if not no_build:
+            print("\n========================================================")
+            print("  [4/4] Native Executable Build & Link")
+            print("========================================================")
+            success = compile_c_to_exe(out_c_path, out_exe_path)
+            if success:
+                print("\n========================================================")
+                print(f"  RECOMPILATION COMPLETE: {os.path.basename(out_exe_path)}")
+                print("========================================================")
+                print("Your game ROM has been compiled into a standalone native Windows binary!")
+                print(f"\nRun the recompiled game (headless test):")
+                print(f"    .{os.sep}{out_exe_path}")
+                print(f"\nRun with live desktop display window (720x480):")
+                print(f"    .{os.sep}{out_exe_path} --window\n")
+            else:
+                print("Compilation failed. See compiler output above.")
     else:
-        print(f"\n[Note] Console '{console}' lifter integration is staged.")
-        print(f"Detected entry point: {info.get('entry_point')}. Ready for CFG pipeline.")
+        print(f"\n[Note] Console '{console}' pipeline:")
+        print(f"  * Detected entry point: {info.get('entry_point')}")
+        print(f"  * Run 'python recompile.py --blocks {rom_path}' to inspect CFG basic blocks.")
 
 if __name__ == "__main__":
     main()

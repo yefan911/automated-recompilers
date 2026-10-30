@@ -71,6 +71,14 @@ static inline void mem_write32(ArmCpuContext* ctx, uint32_t addr, uint32_t val) 
 
 /* Basic Block Prototypes */
 uint32_t recomp_dispatch(ArmCpuContext* ctx, uint32_t target_vram);
+static inline void recomp_call(ArmCpuContext* ctx, uint32_t target_vram) {
+    uint32_t ret_addr = ctx->r[14];
+    uint32_t next = target_vram;
+    int budget = 500000;
+    while (next != 0 && next != ret_addr && budget-- > 0) {
+        next = recomp_dispatch(ctx, next);
+    }
+}
 uint32_t bb_08000000(ArmCpuContext* ctx);
 uint32_t bb_080000C0(ArmCpuContext* ctx);
 uint32_t bb_08000100(ArmCpuContext* ctx);
@@ -90,7 +98,7 @@ uint32_t bb_080000C0(ArmCpuContext* ctx) {
     ctx->r[1] = 0x00000403; /* loaded from 0x080000EC */
     mem_write16(ctx, ctx->r[0], (uint16_t)ctx->r[1]);
     ctx->r[14] = 0x080000D0;
-    recomp_dispatch(ctx, 0x08000100);
+    recomp_call(ctx, 0x08000100);
     return 0x00000000; /* infinite loop halt */
 }
 
@@ -207,6 +215,8 @@ void run_presentation_window(ArmCpuContext* ctx) {
 
 /* Main Entry / Native Recompiled Executable */
 int main(int argc, char** argv) {
+    (void)argc;
+    (void)argv;
     printf("=== Starting Automated Recompiled Game ===\n");
     ArmCpuContext ctx = {0};
     
