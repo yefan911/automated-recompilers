@@ -111,13 +111,17 @@ def compile_c_to_exe(c_source_path: str, output_exe_path: str, extra_libs: list 
             cmd = [compiler, "-O2", c_source_path, "-o", output_exe_path]
             if extra_libs:
                 cmd.extend(extra_libs)
-            else:
+            elif sys.platform == "win32":
                 cmd.extend(["-luser32", "-lgdi32"])
+            else:
+                cmd.extend(["-lm"])
             print(f"[Compiler] Building with {compiler}: {os.path.basename(output_exe_path)}...")
             res = subprocess.run(cmd, capture_output=True, text=True)
             if res.returncode == 0:
                 print(f"[Compiler] Build Successful: {output_exe_path}")
                 return True
+            else:
+                print(f"[Compiler] {compiler} compilation error:\n{res.stderr}")
 
     print("Error: No working C compiler found (MSVC, Clang, or GCC).")
     return False
