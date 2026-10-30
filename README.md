@@ -46,7 +46,26 @@ automated_recompilers/
 │
 ├── build/                      # Generated C sources (.c) and compiled binaries (.exe)
 ├── docs/                       # Architecture diagrams & case studies (N64Recomp, GBARecomp)
+├── gui.py                      # Interactive desktop GUI application
+├── package_exe.py              # Zero-dependency executable packaging utility
 └── recompile.py                # Unified CLI entry point
+```
+
+---
+
+## Interactive Graphical User Interface (GUI)
+
+The framework includes a dark-themed desktop GUI for visual ROM selection, metadata inspection, real-time build logging, and instant game launching:
+
+```bash
+# Launch via CLI option
+python recompile.py --ui
+
+# Or launch directly
+python gui.py
+
+# Or launch with the standalone executable
+.\dist\recompiler.exe --ui
 ```
 
 ---

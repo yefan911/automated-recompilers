@@ -14,6 +14,11 @@ a = Analysis(
         ('roms/test', 'roms/test'),
     ],
     hiddenimports=[
+        'gui',
+        'tkinter',
+        'tkinter.ttk',
+        'tkinter.filedialog',
+        'tkinter.messagebox',
         'src',
         'src.core',
         'src.core.rom_detector',

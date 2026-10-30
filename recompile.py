@@ -22,6 +22,11 @@ from src.core.block_analyzer import BlockDataAnalyzer
 from src.core.native_compiler import compile_c_to_exe
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] in ("--gui", "--ui", "-g"):
+        from gui import main as launch_gui
+        launch_gui()
+        return
+
     if len(sys.argv) < 2:
         print("\n========================================================")
         print("    AUTOMATED GAME ROM RECOMPILER FRAMEWORK")
@@ -30,6 +35,7 @@ def main():
         scan_roms_directory("roms")
         print("\nCommands:")
         print("    python recompile.py <rom_path>           # Auto-recompile & build native .exe")
+        print("    python recompile.py --ui                 # Launch Graphical Desktop Interface")
         print("    python recompile.py --blocks <rom_path>  # Inspect CFG basic blocks & entropy map\n")
         return
 
