@@ -27,13 +27,17 @@ static inline uint32_t mem_read32(ArmCpuContext* ctx, uint32_t addr) {
     return 0;
 }
 
-/* Basic Block 0x08000000 */
+/* Basic Block Prototypes */
+uint32_t bb_08000000(ArmCpuContext* ctx);
+uint32_t bb_080000C0(ArmCpuContext* ctx);
+
+/* Basic Block 0x08000000 - 0x08000000 */
 uint32_t bb_08000000(ArmCpuContext* ctx) {
     (void)ctx;
     return 0x080000C0; /* branch to 0x080000C0 */
 }
 
-/* Basic Block 0x080000C0 */
+/* Basic Block 0x080000C0 - 0x080000D8 */
 uint32_t bb_080000C0(ArmCpuContext* ctx) {
     (void)ctx;
     ctx->r[0] = 0x04000000;
@@ -42,7 +46,7 @@ uint32_t bb_080000C0(ArmCpuContext* ctx) {
     ctx->r[2] = 0x06000000;
     ctx->r[3] = 0x0000001F; /* loaded from 0x080000E0 */
     mem_write16(ctx, ctx->r[2], (uint16_t)ctx->r[3]);
-    return 0x080000D8; /* branch to 0x080000D8 */
+    return 0x00000000; /* infinite loop halt */
 }
 
 /* Main Entry / Native Recompiled Executable */
@@ -54,12 +58,12 @@ int main(int argc, char** argv) {
     
     uint32_t next_pc = 0x08000000;
     int max_steps = 10;
-    while (max_steps-- > 0) {
+    while (max_steps-- > 0 && next_pc != 0) {
         switch (next_pc) {
             case 0x08000000: next_pc = bb_08000000(&ctx); break;
             case 0x080000C0: next_pc = bb_080000C0(&ctx); break;
-            default: 
-                printf("Reached jump target 0x%08X (Halt/Loop)\n", next_pc);
+            default:
+                printf("Reached unmapped / halt jump target 0x%08X\n", next_pc);
                 return 0;
         }
     }

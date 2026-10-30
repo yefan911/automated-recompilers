@@ -1,18 +1,29 @@
 #!/usr/bin/env python3
 """
-ARM7TDMI Static Lifter Prototype
-Translates ARM 32-bit instructions into an Intermediate Representation (IR)
-and outputs structured C functions.
+ARM7TDMI Static Lifter
+Translates ARM 32-bit instructions into an Intermediate Representation (IR),
+builds a Control Flow Graph (CFG), and outputs structured C functions.
 """
 
+import os
+import sys
 import struct
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
+
+# Ensure project root is on sys.path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+from src.lifter.cfg import BasicBlock, ControlFlowGraph
 
 
 class ArmLifter:
     def __init__(self, rom_bytes: bytes, base_vram: int = 0x08000000):
         self.rom = rom_bytes
         self.base_vram = base_vram
+
+    def is_valid_vram(self, vram_addr: int) -> bool:
+        offset = vram_addr - self.base_vram
+        return 0 <= offset <= len(self.rom) - 4
 
     def read_u32(self, vram_addr: int) -> int:
         offset = vram_addr - self.base_vram
@@ -28,8 +39,18 @@ class ArmLifter:
         ir_ops = []
         pc = start_vram
         targets = []
+        max_instructions = 1000
 
-        while True:
+        while max_instructions > 0:
+            max_instructions -= 1
+            if not self.is_valid_vram(pc):
+                ir_ops.append({
+                    "pc": pc,
+                    "op": "HALT",
+                    "c_code": "return 0; /* out of bounds */"
+                })
+                break
+
             raw_instr = self.read_u32(pc)
             instr_pc = pc
             pc += 4
@@ -44,22 +65,32 @@ class ArmLifter:
                     offset |= ~0x00FFFFFF
                 # Target is PC + 8 + (offset << 2)
                 target_vram = (instr_pc + 8 + (offset << 2)) & 0xFFFFFFFF
-                targets.append(target_vram)
 
                 if is_link:
+                    targets.append(target_vram)
                     ir_ops.append({
                         "pc": instr_pc,
                         "op": "CALL",
                         "target": target_vram,
-                        "c_code": f"ctx->lr = 0x{instr_pc + 4:08X};\n    recomp_dispatch(ctx, 0x{target_vram:08X});"
+                        "c_code": f"ctx->r[14] = 0x{instr_pc + 4:08X};\n    recomp_dispatch(ctx, 0x{target_vram:08X});"
                     })
                 else:
-                    ir_ops.append({
-                        "pc": instr_pc,
-                        "op": "BRANCH",
-                        "target": target_vram,
-                        "c_code": f"return 0x{target_vram:08X}; /* branch to 0x{target_vram:08X} */"
-                    })
+                    # Check for self-loop (b .)
+                    if target_vram == instr_pc:
+                        ir_ops.append({
+                            "pc": instr_pc,
+                            "op": "BRANCH",
+                            "target": target_vram,
+                            "c_code": "return 0x00000000; /* infinite loop halt */"
+                        })
+                    else:
+                        targets.append(target_vram)
+                        ir_ops.append({
+                            "pc": instr_pc,
+                            "op": "BRANCH",
+                            "target": target_vram,
+                            "c_code": f"return 0x{target_vram:08X}; /* branch to 0x{target_vram:08X} */"
+                        })
                     break
 
             # Format 2: MOV immediate with rotation (0xE3A0....)
@@ -117,21 +148,55 @@ class ArmLifter:
                     "raw": raw_instr,
                     "c_code": f"/* Unhandled raw opcode 0x{raw_instr:08X} at 0x{instr_pc:08X} */"
                 })
+                # Terminate block on consecutive unknown opcode or zero padding
+                if raw_instr == 0:
+                    ir_ops.append({
+                        "pc": instr_pc,
+                        "op": "HALT",
+                        "c_code": "return 0; /* padding halt */"
+                    })
+                    break
 
         return ir_ops, targets
 
+    def build_cfg(self, entry_vram: int = 0x08000000) -> ControlFlowGraph:
+        """
+        Traces and constructs all reachable Basic Blocks via recursive descent
+        from the specified entry point.
+        """
+        cfg = ControlFlowGraph(entry_vram)
+        worklist = [entry_vram]
+        visited = set()
 
-def lift_rom_to_c(rom_path: str) -> str:
+        while worklist:
+            vram = worklist.pop(0)
+            if vram in visited or not self.is_valid_vram(vram):
+                continue
+            visited.add(vram)
+
+            ops, targets = self.lift_block(vram)
+            block = BasicBlock(
+                start_vram=vram,
+                end_vram=ops[-1]["pc"] if ops else vram,
+                instructions=ops,
+                successors=targets,
+                is_terminal=len(targets) == 0
+            )
+            cfg.add_block(block)
+
+            for target in targets:
+                if target not in visited and self.is_valid_vram(target):
+                    worklist.append(target)
+
+        return cfg
+
+
+def lift_rom_to_c(rom_path: str, entry_point: int = 0x08000000) -> str:
     with open(rom_path, "rb") as f:
         rom_data = f.read()
 
     lifter = ArmLifter(rom_data, base_vram=0x08000000)
-
-    # Disassemble entry block (at 0x08000000 which jumps to 0x080000C0)
-    entry_ops, entry_targets = lifter.lift_block(0x08000000)
-
-    # Disassemble target block (0x080000C0)
-    code_ops, code_targets = lifter.lift_block(0x080000C0)
+    cfg = lifter.build_cfg(entry_point)
 
     c_source = [
         '/* Automatically Generated by Automated Recompiler Framework */',
@@ -163,22 +228,18 @@ def lift_rom_to_c(rom_path: str) -> str:
         '    return 0;',
         '}',
         '',
-        '/* Basic Block 0x08000000 */',
-        'uint32_t bb_08000000(ArmCpuContext* ctx) {',
-        '    (void)ctx;',
+        '/* Basic Block Prototypes */',
     ]
 
-    for op in entry_ops:
-        c_source.append(f'    {op["c_code"]}')
-    c_source.append('}\n')
+    for proto in cfg.emit_prototypes():
+        c_source.append(proto)
+    c_source.append('')
 
-    c_source.append('/* Basic Block 0x080000C0 */')
-    c_source.append('uint32_t bb_080000C0(ArmCpuContext* ctx) {')
-    c_source.append('    (void)ctx;')
-    for op in code_ops:
-        c_source.append(f'    {op["c_code"]}')
-    c_source.append('}\n')
+    # Emit all discovered basic blocks
+    for block in cfg.sorted_blocks():
+        c_source.append(block.emit_c_function())
 
+    # Emit main function and dispatch loop
     c_source.extend([
         '/* Main Entry / Native Recompiled Executable */',
         'int main(int argc, char** argv) {',
@@ -187,16 +248,15 @@ def lift_rom_to_c(rom_path: str) -> str:
         '    printf("=== Starting Automated Recompiled Game ===\\n");',
         '    ArmCpuContext ctx = {0};',
         '    ',
-        '    uint32_t next_pc = 0x08000000;',
+        f'    uint32_t next_pc = 0x{entry_point:08X};',
         '    int max_steps = 10;',
-        '    while (max_steps-- > 0) {',
-        '        switch (next_pc) {',
-        '            case 0x08000000: next_pc = bb_08000000(&ctx); break;',
-        '            case 0x080000C0: next_pc = bb_080000C0(&ctx); break;',
-        '            default: ',
-        '                printf("Reached jump target 0x%08X (Halt/Loop)\\n", next_pc);',
-        '                return 0;',
-        '        }',
+        '    while (max_steps-- > 0 && next_pc != 0) {',
+    ])
+
+    for line in cfg.emit_dispatch_switch():
+        c_source.append(f'    {line}')
+
+    c_source.extend([
         '    }',
         '    printf("=== Recompiled execution finished successfully ===\\n");',
         '    return 0;',
@@ -208,10 +268,10 @@ def lift_rom_to_c(rom_path: str) -> str:
 
 if __name__ == "__main__":
     import sys
+    import os
     rom = sys.argv[1] if len(sys.argv) > 1 else "roms/test/hello_gba.gba"
     c_code = lift_rom_to_c(rom)
     out_file = "build/recompiled_game.c"
-    import os
     os.makedirs("build", exist_ok=True)
     with open(out_file, "w") as f:
         f.write(c_code)
