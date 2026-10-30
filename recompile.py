@@ -54,10 +54,22 @@ def main():
         return
 
     no_build = False
+    max_blocks = 2500
     args = sys.argv[1:]
     if "--no-build" in args:
         no_build = True
         args.remove("--no-build")
+
+    # Check for --max-blocks flag
+    if "--max-blocks" in args:
+        idx = args.index("--max-blocks")
+        if idx + 1 < len(args):
+            try:
+                max_blocks = int(args[idx + 1])
+                args.pop(idx + 1)
+                args.pop(idx)
+            except ValueError:
+                pass
 
     rom_path = args[0]
     info = inspect_file(rom_path)
@@ -82,8 +94,8 @@ def main():
         print("\n========================================================")
         print("  [2/4] Recursive Control Flow Graph (CFG) Disassembly")
         print("========================================================")
-        print(f"Traversing execution paths from entry vector {info.get('entry_point')}...")
-        c_code = lift_rom_to_c(rom_path, entry_point=0x08000000)
+        print(f"Traversing execution paths from entry vector {info.get('entry_point')} (max {max_blocks} blocks)...")
+        c_code = lift_rom_to_c(rom_path, entry_point=0x08000000, max_blocks=max_blocks)
 
         print("\n========================================================")
         print("  [3/4] Native C Code Generation")
