@@ -3,7 +3,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# C / C++ build outputs
+# C / C++ and PyInstaller build outputs
 *.o
 *.obj
 *.exe
@@ -11,6 +11,8 @@ __pycache__/
 *.so
 *.dylib
 *.out
+dist/
+build/pyinstaller/
 
 # Python virtual environments
 .venv/
