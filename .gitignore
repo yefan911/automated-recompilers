@@ -1,0 +1,41 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C / C++ build outputs
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.out
+
+# Python virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Large ROM dumps (prevent committing copyrighted game ROMs)
+roms/gba/*
+roms/n64/*
+roms/ps1/*
+roms/snes/*
+!roms/**/.gitkeep
+
+# Homebrew / test roms: keep the synthetic test ROM
+roms/test/*
+!roms/test/.gitkeep
+!roms/test/hello_gba.gba
