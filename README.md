@@ -94,7 +94,7 @@ This scans all subfolders in `roms/`, identifies the target console, detects end
 ### Step 3: Inspect Structural Blocks & Control Flow
 Inspect the internal structure of any ROM before recompiling:
 ```bash
-python recompile.py --blocks roms/n64/Yoshi.z64
+python recompile.py --blocks roms/n64/testfile.z64
 python recompile.py --blocks roms/test/hello_gba.gba
 ```
 This provides:
