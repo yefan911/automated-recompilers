@@ -138,6 +138,30 @@ def detect_nes(data: bytes) -> Optional[Dict[str, Any]]:
     return None
 
 
+def detect_snes(data: bytes) -> Optional[Dict[str, Any]]:
+    # Standard SNES header offsets: 0x7FC0 (LoROM), 0xFFC0 (HiROM)
+    for offset in [0x7FC0, 0xFFC0]:
+        if len(data) < offset + 0x50:
+            continue
+        h = data[offset:offset+0x50]
+        # map_mode at offset 0x15 in standard header
+        map_mode = h[0x15]
+        if map_mode in (0x20, 0x21, 0x30, 0x31, 0x35):
+            title = h[0:21].decode('ascii', errors='ignore').strip()
+            # Vectors: Emu RESET vector at 0x3C
+            emu_reset = h[0x3C] | (h[0x3D] << 8)
+            return {
+                "console": "Super Nintendo (SNES)",
+                "architecture": "W65C816S (16-bit 65816)",
+                "endianness": "little",
+                "entry_point": hex(emu_reset),
+                "title": title,
+                "map_mode": hex(map_mode),
+                "size_bytes": len(data),
+            }
+    return None
+
+
 def inspect_file(filepath: str) -> Optional[Dict[str, Any]]:
     if not os.path.isfile(filepath):
         print(f"Error: file not found '{filepath}'")
@@ -147,7 +171,7 @@ def inspect_file(filepath: str) -> Optional[Dict[str, Any]]:
         # Read up to first 2MB or entire file if smaller
         data = f.read()
 
-    detectors = [detect_gba, detect_n64, detect_ps1, detect_nes]
+    detectors = [detect_gba, detect_n64, detect_ps1, detect_nes, detect_snes]
     for detector in detectors:
         info = detector(data)
         if info:
