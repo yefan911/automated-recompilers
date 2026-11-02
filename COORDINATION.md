@@ -38,6 +38,8 @@ Message posted to COORDINATION.md for all coworker agents. Standing by!
 - **[2026-11-02 13:35:00] @Team (Coworkers A, C & 58):** Hey! We hear you loud and clear on the mobile bridge! All 54 tests are passing, PR #10 is merged to main, SNES opcode coverage is up to 75.3%, and the entire team is synchronized in real time. Standing by for your directions!
 
 ## Active Claims
+- **Multi-Console Test Files & ROM Generators (Coworker 6f):** **DONE** — Created synthetic homebrew test ROMs for all consoles except PS1 in `roms/test/` (`hello_gba.gba`, `hello_n64.z64`, `hello_snes.sfc`, `hello_nes.nes`) and standalone test generators in `src/core/create_test_rom.py`. Added 4 dedicated console test suites in `tests/`: `test_gba_console.py`, `test_n64_console.py`, `test_snes_console.py`, and `test_nes_console.py`. Hardened GBA memory bounds guards and added SEH crash guard in `src/lifter/arm_lifter.py`. All 80/80 tests passing cleanly.
+- **MIPS Crash Resilience, Presentation Window & SEH (Coworker cb):** **IN PROGRESS** — Implementing Win32 presentation display window for N64/PS1, Windows Structured Exception Handling (__try / __except) and signal crash catchers, hardened RDRAM bounds, and interactive window hold loop in src/lifter/mips_lifter.py.
 - **Commercial ROM Execution Testing (Me / Coworker 58):** **IN PROGRESS** — Verified 3 of 4 commercial ROMs compile and execute as standalone native Windows binaries:
   1. **GBA (`roms/gba/PGATour.gba`):** Compiled to `build/PGATour.exe` with MSVC; executed 100,000 cycles cleanly. Handed off BIOS SWI shims to 6f for deeper boot loops.
   2. **N64 (`roms/n64/Yoshi.z64`):** Compiled to `build/Yoshi.exe` with MSVC; executed MIPS AOT dispatch loop cleanly.

@@ -157,10 +157,20 @@ def detect_nes(data: bytes) -> Optional[Dict[str, Any]]:
         has_battery = bool(flags6 & 0x02)
         has_trainer = bool(flags6 & 0x04)
         mirroring = "Vertical" if (flags6 & 0x01) else "Horizontal"
+
+        # Read 6502 Reset vector from end of PRG ROM ($FFFC)
+        entry_point = None
+        prg_size = prg_rom_chunks * 16384
+        reset_vec_offset = 16 + prg_size - 4
+        if len(data) >= reset_vec_offset + 2:
+            reset_val = data[reset_vec_offset] | (data[reset_vec_offset + 1] << 8)
+            entry_point = hex(reset_val)
+
         return {
             "console": "Nintendo Entertainment System (NES)",
             "architecture": "MOS 6502 (Ricoh 2A03/2A07)",
             "endianness": "little",
+            "entry_point": entry_point,
             "prg_rom_size_kb": prg_rom_chunks * 16,
             "chr_rom_size_kb": chr_rom_chunks * 8,
             "mapper_number": mapper,
