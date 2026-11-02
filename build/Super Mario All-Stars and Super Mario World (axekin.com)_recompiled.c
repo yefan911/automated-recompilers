@@ -19,6 +19,10 @@ typedef struct {
     uint8_t  cgram[512];       /* 512-byte CGRAM color palette */
     uint16_t vram_addr;        /* PPU VRAM address pointer ($2116/$2117) */
     uint16_t cgram_addr;       /* PPU CGRAM address pointer ($2121) */
+    int16_t  m7a, m7b, m7c, m7d;/* Mode 7 affine transformation matrix ($211B-$211E) */
+    int16_t  m7x, m7y;         /* Mode 7 center coordinates ($211F-$2120) */
+    uint8_t  m7_prev_byte;     /* Mode 7 16-bit parameter write latch */
+    uint8_t  spc700_ports[4];  /* Audio APU IO communication ports ($2140-$2143) */
     uint8_t  joypad1[2];       /* Joypad 1 data registers ($4218/$4219) */
     uint32_t pixels_written;   /* Framebuffer activity counter */
 } SnesCpuContext;
@@ -35,6 +39,10 @@ static inline uint8_t snes_read8(SnesCpuContext* ctx, uint32_t addr24) {
     /* Stack (0x0100..0x01FF) and Direct Page (0x0000..0x00FF) live here */
     if (((bank <= 0x3F) || (bank >= 0x80 && bank <= 0xBF)) && offset < 0x2000) {
         return ctx->ram[offset];
+    }
+    /* SPC700 Audio Coprocessor Communication Ports ($2140-$2143) */
+    if (((bank <= 0x3F) || (bank >= 0x80 && bank <= 0xBF)) && offset >= 0x2140 && offset <= 0x2143) {
+        return ctx->spc700_ports[offset - 0x2140];
     }
     /* SNES Joypad 1 Auto-Read Data Registers ($4218-$4219) */
     if (((bank <= 0x3F) || (bank >= 0x80 && bank <= 0xBF)) && (offset == 0x4218 || offset == 0x4219)) {
@@ -54,6 +62,25 @@ static inline void snes_write8(SnesCpuContext* ctx, uint32_t addr24, uint8_t val
     /* Banks 0x00..0x3F and 0x80..0xBF: low 8KB mirror to WRAM */
     if (((bank <= 0x3F) || (bank >= 0x80 && bank <= 0xBF)) && offset < 0x2000) {
         ctx->ram[offset] = val;
+        return;
+    }
+    /* SPC700 Audio Coprocessor Communication Ports ($2140-$2143) */
+    if (((bank <= 0x3F) || (bank >= 0x80 && bank <= 0xBF)) && offset >= 0x2140 && offset <= 0x2143) {
+        ctx->spc700_ports[offset - 0x2140] = val;
+        /* Emulate SPC700 handshake acknowledgement echo */
+        if (offset == 0x2140 && val == 0xCC) ctx->spc700_ports[0] = 0xCC;
+        return;
+    }
+    /* Mode 7 Affine Matrix Parameter Writes ($211B-$2120) */
+    if (((bank <= 0x3F) || (bank >= 0x80 && bank <= 0xBF)) && offset >= 0x211B && offset <= 0x2120) {
+        int16_t word_val = (int16_t)((val << 8) | ctx->m7_prev_byte);
+        ctx->m7_prev_byte = val;
+        if (offset == 0x211B) ctx->m7a = word_val;
+        else if (offset == 0x211C) ctx->m7b = word_val;
+        else if (offset == 0x211D) ctx->m7c = word_val;
+        else if (offset == 0x211E) ctx->m7d = word_val;
+        else if (offset == 0x211F) ctx->m7x = (int16_t)((val << 8) | (ctx->m7x & 0xFF));
+        else if (offset == 0x2120) ctx->m7y = (int16_t)((val << 8) | (ctx->m7y & 0xFF));
         return;
     }
     /* PPU VRAM / Palette writes */
@@ -102,9 +129,7 @@ uint32_t bb_00009D(SnesCpuContext* ctx);
 uint32_t bb_0000A0(SnesCpuContext* ctx);
 uint32_t bb_0000A9(SnesCpuContext* ctx);
 uint32_t bb_0000BD(SnesCpuContext* ctx);
-uint32_t bb_0000CD(SnesCpuContext* ctx);
 uint32_t bb_0000D3(SnesCpuContext* ctx);
-uint32_t bb_0000D9(SnesCpuContext* ctx);
 uint32_t bb_0000E2(SnesCpuContext* ctx);
 uint32_t bb_000114(SnesCpuContext* ctx);
 uint32_t bb_000585(SnesCpuContext* ctx);
@@ -120,9 +145,15 @@ uint32_t bb_0024E8(SnesCpuContext* ctx);
 uint32_t bb_0024EA(SnesCpuContext* ctx);
 uint32_t bb_002534(SnesCpuContext* ctx);
 uint32_t bb_002561(SnesCpuContext* ctx);
+uint32_t bb_002587(SnesCpuContext* ctx);
 uint32_t bb_00503B(SnesCpuContext* ctx);
+uint32_t bb_00503E(SnesCpuContext* ctx);
+uint32_t bb_005046(SnesCpuContext* ctx);
+uint32_t bb_00504E(SnesCpuContext* ctx);
+uint32_t bb_005056(SnesCpuContext* ctx);
 uint32_t bb_00505F(SnesCpuContext* ctx);
 uint32_t bb_005062(SnesCpuContext* ctx);
+uint32_t bb_005066(SnesCpuContext* ctx);
 uint32_t bb_00507E(SnesCpuContext* ctx);
 uint32_t bb_005087(SnesCpuContext* ctx);
 uint32_t bb_00508E(SnesCpuContext* ctx);
@@ -130,31 +161,143 @@ uint32_t bb_005093(SnesCpuContext* ctx);
 uint32_t bb_005095(SnesCpuContext* ctx);
 uint32_t bb_00509B(SnesCpuContext* ctx);
 uint32_t bb_0050A0(SnesCpuContext* ctx);
+uint32_t bb_0050A8(SnesCpuContext* ctx);
 uint32_t bb_0050AA(SnesCpuContext* ctx);
 uint32_t bb_0050AC(SnesCpuContext* ctx);
+uint32_t bb_0050AE(SnesCpuContext* ctx);
 uint32_t bb_0050B4(SnesCpuContext* ctx);
 uint32_t bb_0050B8(SnesCpuContext* ctx);
+uint32_t bb_0050BA(SnesCpuContext* ctx);
 uint32_t bb_0050BC(SnesCpuContext* ctx);
+uint32_t bb_0050C0(SnesCpuContext* ctx);
+uint32_t bb_0050C4(SnesCpuContext* ctx);
+uint32_t bb_0050CC(SnesCpuContext* ctx);
+uint32_t bb_0050D4(SnesCpuContext* ctx);
+uint32_t bb_0050DC(SnesCpuContext* ctx);
 uint32_t bb_0050E4(SnesCpuContext* ctx);
+uint32_t bb_0050EC(SnesCpuContext* ctx);
 uint32_t bb_0050F0(SnesCpuContext* ctx);
+uint32_t bb_0050F4(SnesCpuContext* ctx);
+uint32_t bb_0050F9(SnesCpuContext* ctx);
+uint32_t bb_005103(SnesCpuContext* ctx);
+uint32_t bb_005105(SnesCpuContext* ctx);
+uint32_t bb_005109(SnesCpuContext* ctx);
+uint32_t bb_005111(SnesCpuContext* ctx);
+uint32_t bb_005114(SnesCpuContext* ctx);
+uint32_t bb_005115(SnesCpuContext* ctx);
+uint32_t bb_00511D(SnesCpuContext* ctx);
+uint32_t bb_005121(SnesCpuContext* ctx);
+uint32_t bb_00512D(SnesCpuContext* ctx);
+uint32_t bb_005131(SnesCpuContext* ctx);
+uint32_t bb_005133(SnesCpuContext* ctx);
+uint32_t bb_00513D(SnesCpuContext* ctx);
+uint32_t bb_00513E(SnesCpuContext* ctx);
+uint32_t bb_005144(SnesCpuContext* ctx);
+uint32_t bb_005145(SnesCpuContext* ctx);
+uint32_t bb_005149(SnesCpuContext* ctx);
+uint32_t bb_00514D(SnesCpuContext* ctx);
+uint32_t bb_005150(SnesCpuContext* ctx);
+uint32_t bb_005155(SnesCpuContext* ctx);
+uint32_t bb_00515A(SnesCpuContext* ctx);
+uint32_t bb_005164(SnesCpuContext* ctx);
+uint32_t bb_005166(SnesCpuContext* ctx);
+uint32_t bb_00516A(SnesCpuContext* ctx);
+uint32_t bb_00516B(SnesCpuContext* ctx);
+uint32_t bb_005172(SnesCpuContext* ctx);
+uint32_t bb_005175(SnesCpuContext* ctx);
+uint32_t bb_005176(SnesCpuContext* ctx);
+uint32_t bb_00517E(SnesCpuContext* ctx);
+uint32_t bb_005182(SnesCpuContext* ctx);
+uint32_t bb_00518E(SnesCpuContext* ctx);
+uint32_t bb_005191(SnesCpuContext* ctx);
+uint32_t bb_005192(SnesCpuContext* ctx);
+uint32_t bb_005194(SnesCpuContext* ctx);
+uint32_t bb_00519E(SnesCpuContext* ctx);
+uint32_t bb_0051A6(SnesCpuContext* ctx);
+uint32_t bb_0051A7(SnesCpuContext* ctx);
+uint32_t bb_0051A8(SnesCpuContext* ctx);
+uint32_t bb_0051AA(SnesCpuContext* ctx);
+uint32_t bb_0051AD(SnesCpuContext* ctx);
+uint32_t bb_0051AE(SnesCpuContext* ctx);
+uint32_t bb_0051B6(SnesCpuContext* ctx);
+uint32_t bb_0051B9(SnesCpuContext* ctx);
+uint32_t bb_0051C3(SnesCpuContext* ctx);
+uint32_t bb_0051CC(SnesCpuContext* ctx);
+uint32_t bb_0051D6(SnesCpuContext* ctx);
+uint32_t bb_0051DB(SnesCpuContext* ctx);
+uint32_t bb_0051DC(SnesCpuContext* ctx);
+uint32_t bb_0051DE(SnesCpuContext* ctx);
+uint32_t bb_0051E7(SnesCpuContext* ctx);
+uint32_t bb_0051EA(SnesCpuContext* ctx);
+uint32_t bb_0051F2(SnesCpuContext* ctx);
+uint32_t bb_005200(SnesCpuContext* ctx);
+uint32_t bb_005203(SnesCpuContext* ctx);
+uint32_t bb_005207(SnesCpuContext* ctx);
+uint32_t bb_005208(SnesCpuContext* ctx);
+uint32_t bb_00520E(SnesCpuContext* ctx);
+uint32_t bb_00521A(SnesCpuContext* ctx);
+uint32_t bb_00521F(SnesCpuContext* ctx);
+uint32_t bb_005220(SnesCpuContext* ctx);
+uint32_t bb_005224(SnesCpuContext* ctx);
+uint32_t bb_005228(SnesCpuContext* ctx);
+uint32_t bb_00522C(SnesCpuContext* ctx);
+uint32_t bb_00522F(SnesCpuContext* ctx);
+uint32_t bb_005234(SnesCpuContext* ctx);
+uint32_t bb_00523C(SnesCpuContext* ctx);
+uint32_t bb_005245(SnesCpuContext* ctx);
+uint32_t bb_005248(SnesCpuContext* ctx);
+uint32_t bb_00524C(SnesCpuContext* ctx);
+uint32_t bb_005264(SnesCpuContext* ctx);
+uint32_t bb_00526D(SnesCpuContext* ctx);
+uint32_t bb_005272(SnesCpuContext* ctx);
+uint32_t bb_005274(SnesCpuContext* ctx);
+uint32_t bb_005279(SnesCpuContext* ctx);
+uint32_t bb_005281(SnesCpuContext* ctx);
+uint32_t bb_005291(SnesCpuContext* ctx);
+uint32_t bb_0052AA(SnesCpuContext* ctx);
+uint32_t bb_0052B6(SnesCpuContext* ctx);
+uint32_t bb_0052B9(SnesCpuContext* ctx);
+uint32_t bb_0052CF(SnesCpuContext* ctx);
+uint32_t bb_0052D2(SnesCpuContext* ctx);
+uint32_t bb_0052D6(SnesCpuContext* ctx);
+uint32_t bb_0052EE(SnesCpuContext* ctx);
+uint32_t bb_0052F7(SnesCpuContext* ctx);
+uint32_t bb_0052FE(SnesCpuContext* ctx);
+uint32_t bb_005303(SnesCpuContext* ctx);
+uint32_t bb_00530B(SnesCpuContext* ctx);
+uint32_t bb_005310(SnesCpuContext* ctx);
+uint32_t bb_00531A(SnesCpuContext* ctx);
+uint32_t bb_00531C(SnesCpuContext* ctx);
+uint32_t bb_005328(SnesCpuContext* ctx);
+uint32_t bb_00532B(SnesCpuContext* ctx);
+uint32_t bb_005334(SnesCpuContext* ctx);
+uint32_t bb_005338(SnesCpuContext* ctx);
+uint32_t bb_005340(SnesCpuContext* ctx);
 uint32_t bb_00534C(SnesCpuContext* ctx);
 uint32_t bb_005350(SnesCpuContext* ctx);
 uint32_t bb_005354(SnesCpuContext* ctx);
 uint32_t bb_00535C(SnesCpuContext* ctx);
 uint32_t bb_005364(SnesCpuContext* ctx);
 uint32_t bb_005369(SnesCpuContext* ctx);
+uint32_t bb_00536C(SnesCpuContext* ctx);
 uint32_t bb_005370(SnesCpuContext* ctx);
 uint32_t bb_005372(SnesCpuContext* ctx);
 uint32_t bb_005373(SnesCpuContext* ctx);
+uint32_t bb_005374(SnesCpuContext* ctx);
 uint32_t bb_005375(SnesCpuContext* ctx);
 uint32_t bb_005378(SnesCpuContext* ctx);
+uint32_t bb_00537C(SnesCpuContext* ctx);
 uint32_t bb_005381(SnesCpuContext* ctx);
 uint32_t bb_005384(SnesCpuContext* ctx);
+uint32_t bb_005399(SnesCpuContext* ctx);
+uint32_t bb_00539D(SnesCpuContext* ctx);
+uint32_t bb_0053A5(SnesCpuContext* ctx);
 uint32_t bb_0053A9(SnesCpuContext* ctx);
 uint32_t bb_0053AB(SnesCpuContext* ctx);
 uint32_t bb_0053AD(SnesCpuContext* ctx);
 uint32_t bb_0053B1(SnesCpuContext* ctx);
 uint32_t bb_0053B5(SnesCpuContext* ctx);
+uint32_t bb_0053B6(SnesCpuContext* ctx);
 uint32_t bb_0053BC(SnesCpuContext* ctx);
 uint32_t bb_0053BD(SnesCpuContext* ctx);
 uint32_t bb_0053C2(SnesCpuContext* ctx);
@@ -168,9 +311,12 @@ uint32_t bb_0053DE(SnesCpuContext* ctx);
 uint32_t bb_0053E1(SnesCpuContext* ctx);
 uint32_t bb_0053F2(SnesCpuContext* ctx);
 uint32_t bb_0053F6(SnesCpuContext* ctx);
+uint32_t bb_0053FE(SnesCpuContext* ctx);
+uint32_t bb_005403(SnesCpuContext* ctx);
 uint32_t bb_005406(SnesCpuContext* ctx);
 uint32_t bb_005408(SnesCpuContext* ctx);
 uint32_t bb_00540E(SnesCpuContext* ctx);
+uint32_t bb_00540F(SnesCpuContext* ctx);
 uint32_t bb_005415(SnesCpuContext* ctx);
 uint32_t bb_005416(SnesCpuContext* ctx);
 uint32_t bb_00541B(SnesCpuContext* ctx);
@@ -182,22 +328,49 @@ uint32_t bb_005433(SnesCpuContext* ctx);
 uint32_t bb_005436(SnesCpuContext* ctx);
 uint32_t bb_00543A(SnesCpuContext* ctx);
 uint32_t bb_00543F(SnesCpuContext* ctx);
+uint32_t bb_005443(SnesCpuContext* ctx);
+uint32_t bb_00544B(SnesCpuContext* ctx);
+uint32_t bb_005457(SnesCpuContext* ctx);
 uint32_t bb_00545B(SnesCpuContext* ctx);
 uint32_t bb_00545C(SnesCpuContext* ctx);
+uint32_t bb_00545F(SnesCpuContext* ctx);
+uint32_t bb_005467(SnesCpuContext* ctx);
+uint32_t bb_005468(SnesCpuContext* ctx);
+uint32_t bb_00546C(SnesCpuContext* ctx);
+uint32_t bb_00546E(SnesCpuContext* ctx);
 uint32_t bb_00546F(SnesCpuContext* ctx);
 uint32_t bb_005474(SnesCpuContext* ctx);
+uint32_t bb_005477(SnesCpuContext* ctx);
 uint32_t bb_00547A(SnesCpuContext* ctx);
 uint32_t bb_00547E(SnesCpuContext* ctx);
+uint32_t bb_00547F(SnesCpuContext* ctx);
 uint32_t bb_005480(SnesCpuContext* ctx);
 uint32_t bb_005484(SnesCpuContext* ctx);
 uint32_t bb_005487(SnesCpuContext* ctx);
 uint32_t bb_00548C(SnesCpuContext* ctx);
 uint32_t bb_00548F(SnesCpuContext* ctx);
 uint32_t bb_005498(SnesCpuContext* ctx);
+uint32_t bb_00549C(SnesCpuContext* ctx);
+uint32_t bb_0054A4(SnesCpuContext* ctx);
+uint32_t bb_0054B0(SnesCpuContext* ctx);
 uint32_t bb_0054B4(SnesCpuContext* ctx);
 uint32_t bb_0054B8(SnesCpuContext* ctx);
+uint32_t bb_0054C0(SnesCpuContext* ctx);
+uint32_t bb_0054C1(SnesCpuContext* ctx);
+uint32_t bb_0054C7(SnesCpuContext* ctx);
+uint32_t bb_0054C8(SnesCpuContext* ctx);
+uint32_t bb_0054D0(SnesCpuContext* ctx);
+uint32_t bb_0054D3(SnesCpuContext* ctx);
+uint32_t bb_0054D8(SnesCpuContext* ctx);
+uint32_t bb_0054DD(SnesCpuContext* ctx);
 uint32_t bb_0054E0(SnesCpuContext* ctx);
+uint32_t bb_0054E8(SnesCpuContext* ctx);
+uint32_t bb_0054EC(SnesCpuContext* ctx);
+uint32_t bb_0054ED(SnesCpuContext* ctx);
+uint32_t bb_00551A(SnesCpuContext* ctx);
 uint32_t bb_005520(SnesCpuContext* ctx);
+uint32_t bb_00552C(SnesCpuContext* ctx);
+uint32_t bb_005536(SnesCpuContext* ctx);
 uint32_t bb_007F98(SnesCpuContext* ctx);
 uint32_t bb_007FB2(SnesCpuContext* ctx);
 uint32_t bb_007FDB(SnesCpuContext* ctx);
@@ -220,9 +393,7 @@ uint32_t bb_008096(SnesCpuContext* ctx);
 uint32_t bb_00809D(SnesCpuContext* ctx);
 uint32_t bb_0080A0(SnesCpuContext* ctx);
 uint32_t bb_0080C7(SnesCpuContext* ctx);
-uint32_t bb_0080CD(SnesCpuContext* ctx);
 uint32_t bb_0080D3(SnesCpuContext* ctx);
-uint32_t bb_0080D9(SnesCpuContext* ctx);
 uint32_t bb_0080E2(SnesCpuContext* ctx);
 uint32_t bb_008114(SnesCpuContext* ctx);
 uint32_t bb_0083F8(SnesCpuContext* ctx);
@@ -326,11 +497,101 @@ uint32_t bb_008DB2(SnesCpuContext* ctx);
 uint32_t bb_008DC3(SnesCpuContext* ctx);
 uint32_t bb_008DC5(SnesCpuContext* ctx);
 uint32_t bb_008DD1(SnesCpuContext* ctx);
+uint32_t bb_008EA7(SnesCpuContext* ctx);
 uint32_t bb_008ECE(SnesCpuContext* ctx);
 uint32_t bb_008ED1(SnesCpuContext* ctx);
 uint32_t bb_008EE1(SnesCpuContext* ctx);
+uint32_t bb_008EE6(SnesCpuContext* ctx);
+uint32_t bb_008EE9(SnesCpuContext* ctx);
+uint32_t bb_008EED(SnesCpuContext* ctx);
+uint32_t bb_008EF0(SnesCpuContext* ctx);
+uint32_t bb_008EF2(SnesCpuContext* ctx);
 uint32_t bb_008EF8(SnesCpuContext* ctx);
+uint32_t bb_008F02(SnesCpuContext* ctx);
+uint32_t bb_008F07(SnesCpuContext* ctx);
+uint32_t bb_008F14(SnesCpuContext* ctx);
+uint32_t bb_008F17(SnesCpuContext* ctx);
+uint32_t bb_008F19(SnesCpuContext* ctx);
+uint32_t bb_008F1E(SnesCpuContext* ctx);
+uint32_t bb_008F20(SnesCpuContext* ctx);
+uint32_t bb_008F25(SnesCpuContext* ctx);
+uint32_t bb_008F27(SnesCpuContext* ctx);
+uint32_t bb_008F28(SnesCpuContext* ctx);
+uint32_t bb_008F2E(SnesCpuContext* ctx);
+uint32_t bb_008F31(SnesCpuContext* ctx);
+uint32_t bb_008F33(SnesCpuContext* ctx);
+uint32_t bb_008F37(SnesCpuContext* ctx);
+uint32_t bb_008F39(SnesCpuContext* ctx);
+uint32_t bb_008F40(SnesCpuContext* ctx);
+uint32_t bb_008F41(SnesCpuContext* ctx);
+uint32_t bb_008F42(SnesCpuContext* ctx);
+uint32_t bb_008F46(SnesCpuContext* ctx);
+uint32_t bb_008F48(SnesCpuContext* ctx);
+uint32_t bb_008F4B(SnesCpuContext* ctx);
+uint32_t bb_008F4D(SnesCpuContext* ctx);
+uint32_t bb_008F53(SnesCpuContext* ctx);
+uint32_t bb_008F56(SnesCpuContext* ctx);
+uint32_t bb_008F58(SnesCpuContext* ctx);
+uint32_t bb_008F5D(SnesCpuContext* ctx);
+uint32_t bb_008F5F(SnesCpuContext* ctx);
+uint32_t bb_008F64(SnesCpuContext* ctx);
+uint32_t bb_008F66(SnesCpuContext* ctx);
+uint32_t bb_008F67(SnesCpuContext* ctx);
+uint32_t bb_008F6D(SnesCpuContext* ctx);
+uint32_t bb_008F73(SnesCpuContext* ctx);
+uint32_t bb_008F74(SnesCpuContext* ctx);
+uint32_t bb_008F76(SnesCpuContext* ctx);
+uint32_t bb_008F78(SnesCpuContext* ctx);
+uint32_t bb_008F79(SnesCpuContext* ctx);
+uint32_t bb_008F7D(SnesCpuContext* ctx);
+uint32_t bb_008F7F(SnesCpuContext* ctx);
+uint32_t bb_008F93(SnesCpuContext* ctx);
+uint32_t bb_008F95(SnesCpuContext* ctx);
+uint32_t bb_008F98(SnesCpuContext* ctx);
+uint32_t bb_008FA1(SnesCpuContext* ctx);
+uint32_t bb_008FA3(SnesCpuContext* ctx);
+uint32_t bb_008FA5(SnesCpuContext* ctx);
+uint32_t bb_008FA6(SnesCpuContext* ctx);
+uint32_t bb_008FA9(SnesCpuContext* ctx);
+uint32_t bb_008FAA(SnesCpuContext* ctx);
+uint32_t bb_008FAB(SnesCpuContext* ctx);
+uint32_t bb_008FAE(SnesCpuContext* ctx);
+uint32_t bb_008FB0(SnesCpuContext* ctx);
+uint32_t bb_008FB4(SnesCpuContext* ctx);
+uint32_t bb_008FB5(SnesCpuContext* ctx);
+uint32_t bb_008FBA(SnesCpuContext* ctx);
+uint32_t bb_008FC5(SnesCpuContext* ctx);
+uint32_t bb_008FC7(SnesCpuContext* ctx);
+uint32_t bb_008FC9(SnesCpuContext* ctx);
 uint32_t bb_008FCC(SnesCpuContext* ctx);
+uint32_t bb_008FDE(SnesCpuContext* ctx);
+uint32_t bb_008FDF(SnesCpuContext* ctx);
+uint32_t bb_008FE3(SnesCpuContext* ctx);
+uint32_t bb_008FE8(SnesCpuContext* ctx);
+uint32_t bb_009002(SnesCpuContext* ctx);
+uint32_t bb_009004(SnesCpuContext* ctx);
+uint32_t bb_009007(SnesCpuContext* ctx);
+uint32_t bb_009010(SnesCpuContext* ctx);
+uint32_t bb_009012(SnesCpuContext* ctx);
+uint32_t bb_009015(SnesCpuContext* ctx);
+uint32_t bb_009016(SnesCpuContext* ctx);
+uint32_t bb_009019(SnesCpuContext* ctx);
+uint32_t bb_009021(SnesCpuContext* ctx);
+uint32_t bb_009027(SnesCpuContext* ctx);
+uint32_t bb_009032(SnesCpuContext* ctx);
+uint32_t bb_009034(SnesCpuContext* ctx);
+uint32_t bb_009036(SnesCpuContext* ctx);
+uint32_t bb_009043(SnesCpuContext* ctx);
+uint32_t bb_009053(SnesCpuContext* ctx);
+uint32_t bb_00905B(SnesCpuContext* ctx);
+uint32_t bb_00905D(SnesCpuContext* ctx);
+uint32_t bb_00905E(SnesCpuContext* ctx);
+uint32_t bb_009069(SnesCpuContext* ctx);
+uint32_t bb_0092A0(SnesCpuContext* ctx);
+uint32_t bb_0092A3(SnesCpuContext* ctx);
+uint32_t bb_0092B3(SnesCpuContext* ctx);
+uint32_t bb_0092B6(SnesCpuContext* ctx);
+uint32_t bb_0092B8(SnesCpuContext* ctx);
 uint32_t bb_009384(SnesCpuContext* ctx);
 uint32_t bb_009387(SnesCpuContext* ctx);
 uint32_t bb_00939F(SnesCpuContext* ctx);
@@ -343,7 +604,14 @@ uint32_t bb_0094BE(SnesCpuContext* ctx);
 uint32_t bb_0094C3(SnesCpuContext* ctx);
 uint32_t bb_00A530(SnesCpuContext* ctx);
 uint32_t bb_00A561(SnesCpuContext* ctx);
+uint32_t bb_00A587(SnesCpuContext* ctx);
 uint32_t bb_00A87B(SnesCpuContext* ctx);
+uint32_t bb_00A894(SnesCpuContext* ctx);
+uint32_t bb_00A8C9(SnesCpuContext* ctx);
+uint32_t bb_00A8D1(SnesCpuContext* ctx);
+uint32_t bb_00A8DD(SnesCpuContext* ctx);
+uint32_t bb_00A90B(SnesCpuContext* ctx);
+uint32_t bb_00A919(SnesCpuContext* ctx);
 uint32_t bb_00B67E(SnesCpuContext* ctx);
 uint32_t bb_00B690(SnesCpuContext* ctx);
 uint32_t bb_00B6B8(SnesCpuContext* ctx);
@@ -357,14 +625,37 @@ uint32_t bb_00B6DF(SnesCpuContext* ctx);
 uint32_t bb_00B6E3(SnesCpuContext* ctx);
 uint32_t bb_00B6E5(SnesCpuContext* ctx);
 uint32_t bb_00B700(SnesCpuContext* ctx);
+uint32_t bb_00B719(SnesCpuContext* ctx);
+uint32_t bb_00B72F(SnesCpuContext* ctx);
+uint32_t bb_00B734(SnesCpuContext* ctx);
+uint32_t bb_00B737(SnesCpuContext* ctx);
+uint32_t bb_00B73E(SnesCpuContext* ctx);
 uint32_t bb_00B741(SnesCpuContext* ctx);
 uint32_t bb_00B743(SnesCpuContext* ctx);
 uint32_t bb_00B748(SnesCpuContext* ctx);
 uint32_t bb_00B74B(SnesCpuContext* ctx);
 uint32_t bb_00B74D(SnesCpuContext* ctx);
 uint32_t bb_00B99B(SnesCpuContext* ctx);
+uint32_t bb_00BA3A(SnesCpuContext* ctx);
+uint32_t bb_00BA51(SnesCpuContext* ctx);
+uint32_t bb_00BA64(SnesCpuContext* ctx);
+uint32_t bb_00BA69(SnesCpuContext* ctx);
+uint32_t bb_00BA82(SnesCpuContext* ctx);
+uint32_t bb_00BA87(SnesCpuContext* ctx);
+uint32_t bb_00BA89(SnesCpuContext* ctx);
+uint32_t bb_00BA8D(SnesCpuContext* ctx);
+uint32_t bb_00BA8F(SnesCpuContext* ctx);
+uint32_t bb_00BA99(SnesCpuContext* ctx);
+uint32_t bb_00BAA5(SnesCpuContext* ctx);
 uint32_t bb_150A0A(SnesCpuContext* ctx);
 uint32_t bb_309096(SnesCpuContext* ctx);
+uint32_t bb_309098(SnesCpuContext* ctx);
+uint32_t bb_30909C(SnesCpuContext* ctx);
+uint32_t bb_3090A1(SnesCpuContext* ctx);
+uint32_t bb_309D73(SnesCpuContext* ctx);
+uint32_t bb_309D75(SnesCpuContext* ctx);
+uint32_t bb_309D79(SnesCpuContext* ctx);
+uint32_t bb_309D83(SnesCpuContext* ctx);
 uint32_t bb_309DBA(SnesCpuContext* ctx);
 uint32_t bb_309DBC(SnesCpuContext* ctx);
 uint32_t bb_309DC2(SnesCpuContext* ctx);
@@ -374,10 +665,14 @@ uint32_t bb_309DD1(SnesCpuContext* ctx);
 uint32_t bb_309DD7(SnesCpuContext* ctx);
 uint32_t bb_309DDA(SnesCpuContext* ctx);
 uint32_t bb_309DDB(SnesCpuContext* ctx);
+uint32_t bb_309DE4(SnesCpuContext* ctx);
+uint32_t bb_309DE6(SnesCpuContext* ctx);
+uint32_t bb_309DE9(SnesCpuContext* ctx);
 uint32_t bb_309E07(SnesCpuContext* ctx);
 uint32_t bb_309E15(SnesCpuContext* ctx);
 uint32_t bb_309E16(SnesCpuContext* ctx);
 uint32_t bb_309E1D(SnesCpuContext* ctx);
+uint32_t bb_309E25(SnesCpuContext* ctx);
 uint32_t bb_309E32(SnesCpuContext* ctx);
 uint32_t bb_309E36(SnesCpuContext* ctx);
 uint32_t bb_309E3D(SnesCpuContext* ctx);
@@ -396,6 +691,7 @@ uint32_t bb_309F1A(SnesCpuContext* ctx);
 uint32_t bb_309F33(SnesCpuContext* ctx);
 uint32_t bb_309F36(SnesCpuContext* ctx);
 uint32_t bb_309F45(SnesCpuContext* ctx);
+uint32_t bb_309F47(SnesCpuContext* ctx);
 uint32_t bb_309F9C(SnesCpuContext* ctx);
 
 /* SNES Basic Block 0x000099 - 0x00009B */
@@ -413,6 +709,7 @@ uint32_t bb_00009D(SnesCpuContext* ctx) {
     (void)ctx;
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x009F);
     recomp_snes_call(ctx, 0x0087B9);
+    return 0x0000A0;
     return 0;
 }
 
@@ -446,7 +743,7 @@ uint32_t bb_0000A9(SnesCpuContext* ctx) {
     return 0;
 }
 
-/* SNES Basic Block 0x0000BD - 0x0000CB */
+/* SNES Basic Block 0x0000BD - 0x0000D1 */
 uint32_t bb_0000BD(SnesCpuContext* ctx) {
     (void)ctx;
     /* unknown snes opcode 0x00 at 0x0000BD */
@@ -459,15 +756,10 @@ uint32_t bb_0000BD(SnesCpuContext* ctx) {
     /* unknown snes opcode 0x00 at 0x0000C4 */
     /* unknown snes opcode 0x00 at 0x0000C5 */
     /* unknown snes opcode 0x00 at 0x0000C6 */
-    /* unknown snes opcode 0xA6 at 0x0000C7 */
-    ctx->p = ((ctx->x == 0xA6BF) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
-    return 0x0000CD;
-    return 0;
-}
-
-/* SNES Basic Block 0x0000CD - 0x0000D1 */
-uint32_t bb_0000CD(SnesCpuContext* ctx) {
-    (void)ctx;
+    ctx->x = snes_read16(ctx, (ctx->dp + 0xE0) & 0xFFFF);
+    /* unknown snes opcode 0xBF at 0x0000C9 */
+    ctx->x = snes_read16(ctx, (ctx->dp + 0x80) & 0xFFFF);
+    /* unknown snes opcode 0x00 at 0x0000CC */
     snes_write8(ctx, (ctx->dp + 0x03) & 0xFFFF, (uint8_t)ctx->a);
     /* unknown snes opcode 0xBF at 0x0000CF */
     /* unknown snes opcode 0xB1 at 0x0000D0 */
@@ -475,19 +767,12 @@ uint32_t bb_0000CD(SnesCpuContext* ctx) {
     return 0;
 }
 
-/* SNES Basic Block 0x0000D3 - 0x0000D7 */
+/* SNES Basic Block 0x0000D3 - 0x0000DE */
 uint32_t bb_0000D3(SnesCpuContext* ctx) {
     (void)ctx;
     snes_write8(ctx, (ctx->dp + 0x04) & 0xFFFF, (uint8_t)ctx->a);
     /* unknown snes opcode 0xBF at 0x0000D5 */
-    /* unknown snes opcode 0xBC at 0x0000D6 */
-    return 0x0000D9;
-    return 0;
-}
-
-/* SNES Basic Block 0x0000D9 - 0x0000DE */
-uint32_t bb_0000D9(SnesCpuContext* ctx) {
-    (void)ctx;
+    ctx->y = snes_read16(ctx, (ctx->db << 16) | ((0x0080 + ctx->x) & 0xFFFF));
     snes_write8(ctx, (ctx->dp + 0x05) & 0xFFFF, (uint8_t)ctx->a);
     /* unknown snes opcode 0xDC at 0x0000DB */
     /* unknown snes opcode 0x03 at 0x0000DC */
@@ -496,6 +781,7 @@ uint32_t bb_0000D9(SnesCpuContext* ctx) {
     snes_write8(ctx, 0x000000 | ctx->sp, ctx->pb);
     snes_write16(ctx, 0x000000 | ctx->sp + 1, 0x00E1);
     recomp_snes_call(ctx, 0x008874);
+    return 0x0000E2;
     return 0;
 }
 
@@ -525,6 +811,7 @@ uint32_t bb_0000E2(SnesCpuContext* ctx) {
     snes_write8(ctx, (ctx->db << 16) | 0x2141, (uint8_t)ctx->a);
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x0113);
     recomp_snes_call(ctx, 0x0083F8);
+    return 0x000114;
     return 0;
 }
 
@@ -558,8 +845,7 @@ uint32_t bb_000585(SnesCpuContext* ctx) {
     ctx->p = (((ctx->a & 0xFF) & 0xA0) == 0) ? (ctx->p | 0x02) : (ctx->p & ~0x02);
     /* unknown snes opcode 0x3C at 0x00058C */
     snes_write8(ctx, (ctx->dp + 0x02) & 0xFFFF, (uint8_t)ctx->a);
-    /* unknown snes opcode 0x84 at 0x00058F */
-    /* unknown snes opcode 0x04 at 0x000590 */
+    snes_write8(ctx, (ctx->dp + 0x04) & 0xFFFF, (uint8_t)ctx->y);
     ctx->a = (ctx->a & 0xFF00) | 0x00;
     /* unknown snes opcode 0x92 at 0x000593 */
     ctx->y = (ctx->y & 0xFF00) | 0x7F;
@@ -567,6 +853,7 @@ uint32_t bb_000585(SnesCpuContext* ctx) {
     snes_write8(ctx, 0x000000 | ctx->sp, ctx->pb);
     snes_write16(ctx, 0x000000 | ctx->sp + 1, 0x0599);
     recomp_snes_call(ctx, 0x0086B3);
+    return 0x00059A;
     return 0;
 }
 
@@ -700,6 +987,7 @@ uint32_t bb_002534(SnesCpuContext* ctx) {
     ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | ((((ctx->a & 0xFF) << 1) | (ctx->p & 1)) & 0xFF)) : ((((ctx->a << 1) | (ctx->p & 1)) & 0xFFFF));
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x2560);
     recomp_snes_call(ctx, 0x00A87B);
+    return 0x002561;
     return 0;
 }
 
@@ -710,12 +998,73 @@ uint32_t bb_002561(SnesCpuContext* ctx) {
     return 0;
 }
 
+/* SNES Basic Block 0x002587 - 0x002587 */
+uint32_t bb_002587(SnesCpuContext* ctx) {
+    (void)ctx;
+    { uint16_t ret_off = snes_read16(ctx, 0x000000 | ctx->sp + 1); uint8_t ret_bank = snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 3; return ((ret_bank << 16) | ret_off) + 1; } /* rtl */
+    return 0;
+}
+
 /* SNES Basic Block 0x00503B - 0x00503C */
 uint32_t bb_00503B(SnesCpuContext* ctx) {
     (void)ctx;
     ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
     if (!(ctx->p & 0x02)) return 0x0050A8;
     else return 0x00503E;
+    return 0;
+}
+
+/* SNES Basic Block 0x00503E - 0x005044 */
+uint32_t bb_00503E(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x00503E */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p = ((ctx->x == 0x466A) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    if (ctx->p & 0x02) return 0x0050AE;
+    else return 0x005046;
+    return 0;
+}
+
+/* SNES Basic Block 0x005046 - 0x00504C */
+uint32_t bb_005046(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x46 at 0x005046 */
+    ctx->p &= ~0x01;
+    ctx->p = ((ctx->y == 0x466E) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p &= ~0x01;
+    if (!(ctx->p & 0x02)) return 0x0050BA;
+    else return 0x00504E;
+    return 0;
+}
+
+/* SNES Basic Block 0x00504E - 0x005054 */
+uint32_t bb_00504E(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x46 at 0x00504E */
+    ctx->p &= ~0x01;
+    ctx->p = ((ctx->x == 0x066C) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p &= ~0x01;
+    if (ctx->p & 0x02) return 0x0050C4;
+    else return 0x005056;
+    return 0;
+}
+
+/* SNES Basic Block 0x005056 - 0x005064 */
+uint32_t bb_005056(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x005056 */
+    /* unknown snes opcode 0xFF at 0x005057 */
+    /* unknown snes opcode 0x00 at 0x005058 */
+    /* unknown snes opcode 0xD3 at 0x005059 */
+    snes_write16(ctx, (ctx->db << 16) | 0x0006, snes_read16(ctx, (ctx->db << 16) | 0x0006) + 1);
+    /* unknown snes opcode 0xD3 at 0x00505D */
+    snes_write16(ctx, (ctx->db << 16) | 0x1006, snes_read16(ctx, (ctx->db << 16) | 0x1006) + 1);
+    /* unknown snes opcode 0xD9 at 0x005061 */
+    ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) - 1) & 0xFF) : ((ctx->y - 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x005063 */
+    if (!(ctx->p & 0x80)) return 0x005046;
+    else return 0x005066;
     return 0;
 }
 
@@ -735,6 +1084,49 @@ uint32_t bb_005062(SnesCpuContext* ctx) {
     /* unknown snes opcode 0x06 at 0x005063 */
     if (!(ctx->p & 0x80)) return 0x005046;
     else return 0x005066;
+    return 0;
+}
+
+/* SNES Basic Block 0x005066 - 0x00508C */
+uint32_t bb_005066(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p = ((ctx->a & 0xE806) == 0) ? (ctx->p | 0x02) : (ctx->p & ~0x02);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->x = snes_read16(ctx, (ctx->dp + 0x06) & 0xFFFF);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->p |= 0x08;
+    ctx->y = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
+    /* unknown snes opcode 0x06 at 0x00506F */
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->x = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
+    /* unknown snes opcode 0x06 at 0x005073 */
+    ctx->p |= 0x08;
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0xC6 at 0x005076 */
+    /* unknown snes opcode 0x06 at 0x005077 */
+    ctx->p |= 0x08;
+    ctx->p |= 0x08;
+    ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) + 1) & 0xFF) : ((ctx->y + 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x00507B */
+    ctx->p |= 0x08;
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) - 1) & 0xFF) : ((ctx->x - 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x00507F */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0xE6 at 0x005082 */
+    /* unknown snes opcode 0x06 at 0x005083 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p |= 0x08;
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x005087 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    /* nop */
+    /* unknown snes opcode 0x06 at 0x00508B */
+    if (!(ctx->p & 0x80)) return 0x00507E;
+    else return 0x00508E;
     return 0;
 }
 
@@ -831,6 +1223,16 @@ uint32_t bb_0050A0(SnesCpuContext* ctx) {
     return 0;
 }
 
+/* SNES Basic Block 0x0050A8 - 0x0050AA */
+uint32_t bb_0050A8(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x0050A8 */
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    if (!(ctx->p & 0x02)) return 0x0050B8;
+    else return 0x0050AC;
+    return 0;
+}
+
 /* SNES Basic Block 0x0050AA - 0x0050AA */
 uint32_t bb_0050AA(SnesCpuContext* ctx) {
     (void)ctx;
@@ -844,6 +1246,16 @@ uint32_t bb_0050AC(SnesCpuContext* ctx) {
     (void)ctx;
     /* unknown snes opcode 0x06 at 0x0050AC */
     ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->p = ((ctx->x == 0x460C) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x00 at 0x0050B1 */
+    if (!(ctx->p & 0x02)) return 0x0050F0;
+    else return 0x0050B4;
+    return 0;
+}
+
+/* SNES Basic Block 0x0050AE - 0x0050B2 */
+uint32_t bb_0050AE(SnesCpuContext* ctx) {
+    (void)ctx;
     ctx->p = ((ctx->x == 0x460C) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
     /* unknown snes opcode 0x00 at 0x0050B1 */
     if (!(ctx->p & 0x02)) return 0x0050F0;
@@ -873,6 +1285,14 @@ uint32_t bb_0050B8(SnesCpuContext* ctx) {
     return 0;
 }
 
+/* SNES Basic Block 0x0050BA - 0x0050BA */
+uint32_t bb_0050BA(SnesCpuContext* ctx) {
+    (void)ctx;
+    if (ctx->p & 0x02) return 0x0050E4;
+    else return 0x0050BC;
+    return 0;
+}
+
 /* SNES Basic Block 0x0050BC - 0x0050C2 */
 uint32_t bb_0050BC(SnesCpuContext* ctx) {
     (void)ctx;
@@ -882,6 +1302,64 @@ uint32_t bb_0050BC(SnesCpuContext* ctx) {
     ctx->p |= 0x08;
     if (!(ctx->p & 0x02)) return 0x0050F0;
     else return 0x0050C4;
+    return 0;
+}
+
+/* SNES Basic Block 0x0050C0 - 0x0050C2 */
+uint32_t bb_0050C0(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x0050C0 */
+    ctx->p |= 0x08;
+    if (!(ctx->p & 0x02)) return 0x0050F0;
+    else return 0x0050C4;
+    return 0;
+}
+
+/* SNES Basic Block 0x0050C4 - 0x0050CA */
+uint32_t bb_0050C4(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x0050C4 */
+    ctx->p |= 0x08;
+    ctx->p = ((ctx->x == 0x462C) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p |= 0x08;
+    if (ctx->p & 0x02) return 0x005114;
+    else return 0x0050CC;
+    return 0;
+}
+
+/* SNES Basic Block 0x0050CC - 0x0050D2 */
+uint32_t bb_0050CC(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x46 at 0x0050CC */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p = ((ctx->y == 0x0668) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    if (!(ctx->p & 0x02)) return 0x00513E;
+    else return 0x0050D4;
+    return 0;
+}
+
+/* SNES Basic Block 0x0050D4 - 0x0050DA */
+uint32_t bb_0050D4(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x0050D4 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p = ((ctx->x == 0x466A) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    if (ctx->p & 0x02) return 0x005144;
+    else return 0x0050DC;
+    return 0;
+}
+
+/* SNES Basic Block 0x0050DC - 0x0050E2 */
+uint32_t bb_0050DC(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x46 at 0x0050DC */
+    ctx->p &= ~0x01;
+    ctx->p = ((ctx->y == 0x466E) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p &= ~0x01;
+    if (!(ctx->p & 0x02)) return 0x005150;
+    else return 0x0050E4;
     return 0;
 }
 
@@ -897,6 +1375,16 @@ uint32_t bb_0050E4(SnesCpuContext* ctx) {
     return 0;
 }
 
+/* SNES Basic Block 0x0050EC - 0x0050EE */
+uint32_t bb_0050EC(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x0050EC */
+    /* unknown snes opcode 0xFF at 0x0050ED */
+    if (ctx->p & 0x02) return 0x0050C0;
+    else return 0x0050F0;
+    return 0;
+}
+
 /* SNES Basic Block 0x0050F0 - 0x0050F2 */
 uint32_t bb_0050F0(SnesCpuContext* ctx) {
     (void)ctx;
@@ -904,6 +1392,1433 @@ uint32_t bb_0050F0(SnesCpuContext* ctx) {
     /* unknown snes opcode 0x06 at 0x0050F1 */
     if (ctx->p & 0x02) return 0x0050D4;
     else return 0x0050F4;
+    return 0;
+}
+
+/* SNES Basic Block 0x0050F4 - 0x0050F7 */
+uint32_t bb_0050F4(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x40 at 0x0050F4 */
+    /* unknown snes opcode 0x46 at 0x0050F5 */
+    ctx->p &= ~0x08;
+    if (!(ctx->p & 0x02)) return 0x005103;
+    else return 0x0050F9;
+    return 0;
+}
+
+/* SNES Basic Block 0x0050F9 - 0x005103 */
+uint32_t bb_0050F9(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x0050F9 */
+    ctx->p &= ~0x08;
+    ctx->p = ((ctx->x == 0x0608) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->p = ((ctx->y == 0x0628) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    if (!(ctx->p & 0x02)) return 0x005111;
+    else return 0x005105;
+    return 0;
+}
+
+/* SNES Basic Block 0x005103 - 0x005103 */
+uint32_t bb_005103(SnesCpuContext* ctx) {
+    (void)ctx;
+    if (!(ctx->p & 0x02)) return 0x005111;
+    else return 0x005105;
+    return 0;
+}
+
+/* SNES Basic Block 0x005105 - 0x005107 */
+uint32_t bb_005105(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x005105 */
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    if (!(ctx->p & 0x02)) return 0x005133;
+    else return 0x005109;
+    return 0;
+}
+
+/* SNES Basic Block 0x005109 - 0x005113 */
+uint32_t bb_005109(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x005109 */
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->p = ((ctx->x == 0x460C) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->p = ((ctx->x == 0x462A) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    if (ctx->p & 0x02) return 0x00513D;
+    else return 0x005115;
+    return 0;
+}
+
+/* SNES Basic Block 0x005111 - 0x005113 */
+uint32_t bb_005111(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x46 at 0x005111 */
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    if (ctx->p & 0x02) return 0x00513D;
+    else return 0x005115;
+    return 0;
+}
+
+/* SNES Basic Block 0x005114 - 0x00511B */
+uint32_t bb_005114(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p = snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1;
+    /* unknown snes opcode 0x46 at 0x005115 */
+    ctx->p |= 0x08;
+    ctx->p = ((ctx->y == 0x0648) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p |= 0x08;
+    if (!(ctx->p & 0x02)) return 0x005149;
+    else return 0x00511D;
+    return 0;
+}
+
+/* SNES Basic Block 0x005115 - 0x00511B */
+uint32_t bb_005115(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x46 at 0x005115 */
+    ctx->p |= 0x08;
+    ctx->p = ((ctx->y == 0x0648) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p |= 0x08;
+    if (!(ctx->p & 0x02)) return 0x005149;
+    else return 0x00511D;
+    return 0;
+}
+
+/* SNES Basic Block 0x00511D - 0x00511F */
+uint32_t bb_00511D(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x00511D */
+    ctx->p |= 0x08;
+    if (!(ctx->p & 0x02)) return 0x00516B;
+    else return 0x005121;
+    return 0;
+}
+
+/* SNES Basic Block 0x005121 - 0x00512B */
+uint32_t bb_005121(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x005121 */
+    ctx->p |= 0x08;
+    ctx->p = ((ctx->x == 0x462C) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p |= 0x08;
+    ctx->p = ((ctx->x == 0x464A) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p |= 0x08;
+    if (ctx->p & 0x02) return 0x005175;
+    else return 0x00512D;
+    return 0;
+}
+
+/* SNES Basic Block 0x00512D - 0x00512F */
+uint32_t bb_00512D(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x46 at 0x00512D */
+    /* unknown snes opcode 0x00 at 0x00512E */
+    if (!(ctx->p & 0x02)) return 0x005191;
+    else return 0x005131;
+    return 0;
+}
+
+/* SNES Basic Block 0x005131 - 0x00513B */
+uint32_t bb_005131(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x005131 */
+    /* unknown snes opcode 0x00 at 0x005132 */
+    ctx->p = ((ctx->x == 0x4660) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p = ((ctx->y == 0x0668) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    if (!(ctx->p & 0x02)) return 0x0051A7;
+    else return 0x00513D;
+    return 0;
+}
+
+/* SNES Basic Block 0x005133 - 0x00513B */
+uint32_t bb_005133(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p = ((ctx->x == 0x4660) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p = ((ctx->y == 0x0668) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    if (!(ctx->p & 0x02)) return 0x0051A7;
+    else return 0x00513D;
+    return 0;
+}
+
+/* SNES Basic Block 0x00513D - 0x005143 */
+uint32_t bb_00513D(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x00513D */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p = ((ctx->x == 0x466A) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    if (ctx->p & 0x02) return 0x0051AD;
+    else return 0x005145;
+    return 0;
+}
+
+/* SNES Basic Block 0x00513E - 0x005143 */
+uint32_t bb_00513E(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p = ((ctx->x == 0x466A) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    if (ctx->p & 0x02) return 0x0051AD;
+    else return 0x005145;
+    return 0;
+}
+
+/* SNES Basic Block 0x005144 - 0x00514B */
+uint32_t bb_005144(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2;
+    /* unknown snes opcode 0x46 at 0x005145 */
+    ctx->p &= ~0x01;
+    ctx->p = ((ctx->y == 0x466E) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p &= ~0x01;
+    if (!(ctx->p & 0x02)) return 0x0051B9;
+    else return 0x00514D;
+    return 0;
+}
+
+/* SNES Basic Block 0x005145 - 0x00514B */
+uint32_t bb_005145(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x46 at 0x005145 */
+    ctx->p &= ~0x01;
+    ctx->p = ((ctx->y == 0x466E) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p &= ~0x01;
+    if (!(ctx->p & 0x02)) return 0x0051B9;
+    else return 0x00514D;
+    return 0;
+}
+
+/* SNES Basic Block 0x005149 - 0x00514B */
+uint32_t bb_005149(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x46 at 0x005149 */
+    ctx->p &= ~0x01;
+    if (!(ctx->p & 0x02)) return 0x0051B9;
+    else return 0x00514D;
+    return 0;
+}
+
+/* SNES Basic Block 0x00514D - 0x005153 */
+uint32_t bb_00514D(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x46 at 0x00514D */
+    ctx->p &= ~0x01;
+    ctx->p = ((ctx->x == 0x066C) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p &= ~0x01;
+    if (ctx->p & 0x02) return 0x0051C3;
+    else return 0x005155;
+    return 0;
+}
+
+/* SNES Basic Block 0x005150 - 0x005153 */
+uint32_t bb_005150(SnesCpuContext* ctx) {
+    (void)ctx;
+    return snes_read16(ctx, (ctx->pb << 16) | 0x1806); /* jmp (0x1806) */
+    if (ctx->p & 0x02) return 0x0051C3;
+    else return 0x005155;
+    return 0;
+}
+
+/* SNES Basic Block 0x005155 - 0x005158 */
+uint32_t bb_005155(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x005155 */
+    /* unknown snes opcode 0xFF at 0x005156 */
+    ctx->p &= ~0x08;
+    if (!(ctx->p & 0x02)) return 0x005164;
+    else return 0x00515A;
+    return 0;
+}
+
+/* SNES Basic Block 0x00515A - 0x005164 */
+uint32_t bb_00515A(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x00515A */
+    ctx->p &= ~0x08;
+    ctx->p = ((ctx->x == 0x0608) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->p = ((ctx->y == 0x0628) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    if (!(ctx->p & 0x02)) return 0x005172;
+    else return 0x005166;
+    return 0;
+}
+
+/* SNES Basic Block 0x005164 - 0x005164 */
+uint32_t bb_005164(SnesCpuContext* ctx) {
+    (void)ctx;
+    if (!(ctx->p & 0x02)) return 0x005172;
+    else return 0x005166;
+    return 0;
+}
+
+/* SNES Basic Block 0x005166 - 0x005168 */
+uint32_t bb_005166(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x005166 */
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    if (!(ctx->p & 0x02)) return 0x005194;
+    else return 0x00516A;
+    return 0;
+}
+
+/* SNES Basic Block 0x00516A - 0x005174 */
+uint32_t bb_00516A(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x00516A */
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->p = ((ctx->x == 0x460C) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->p = ((ctx->x == 0x462A) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    if (ctx->p & 0x02) return 0x00519E;
+    else return 0x005176;
+    return 0;
+}
+
+/* SNES Basic Block 0x00516B - 0x005174 */
+uint32_t bb_00516B(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->p = ((ctx->x == 0x460C) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->p = ((ctx->x == 0x462A) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    if (ctx->p & 0x02) return 0x00519E;
+    else return 0x005176;
+    return 0;
+}
+
+/* SNES Basic Block 0x005172 - 0x005174 */
+uint32_t bb_005172(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x46 at 0x005172 */
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    if (ctx->p & 0x02) return 0x00519E;
+    else return 0x005176;
+    return 0;
+}
+
+/* SNES Basic Block 0x005175 - 0x00517C */
+uint32_t bb_005175(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p = snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1;
+    /* unknown snes opcode 0x46 at 0x005176 */
+    ctx->p |= 0x08;
+    ctx->p = ((ctx->y == 0x0648) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p |= 0x08;
+    if (!(ctx->p & 0x02)) return 0x0051AA;
+    else return 0x00517E;
+    return 0;
+}
+
+/* SNES Basic Block 0x005176 - 0x00517C */
+uint32_t bb_005176(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x46 at 0x005176 */
+    ctx->p |= 0x08;
+    ctx->p = ((ctx->y == 0x0648) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p |= 0x08;
+    if (!(ctx->p & 0x02)) return 0x0051AA;
+    else return 0x00517E;
+    return 0;
+}
+
+/* SNES Basic Block 0x00517E - 0x005180 */
+uint32_t bb_00517E(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x00517E */
+    ctx->p |= 0x08;
+    if (!(ctx->p & 0x02)) return 0x0051CC;
+    else return 0x005182;
+    return 0;
+}
+
+/* SNES Basic Block 0x005182 - 0x00518C */
+uint32_t bb_005182(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x005182 */
+    ctx->p |= 0x08;
+    ctx->p = ((ctx->x == 0x462C) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p |= 0x08;
+    ctx->p = ((ctx->x == 0x464A) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p |= 0x08;
+    if (ctx->p & 0x02) return 0x0051D6;
+    else return 0x00518E;
+    return 0;
+}
+
+/* SNES Basic Block 0x00518E - 0x005190 */
+uint32_t bb_00518E(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x46 at 0x00518E */
+    /* unknown snes opcode 0x00 at 0x00518F */
+    if (!(ctx->p & 0x02)) return 0x0051F2;
+    else return 0x005192;
+    return 0;
+}
+
+/* SNES Basic Block 0x005191 - 0x005191 */
+uint32_t bb_005191(SnesCpuContext* ctx) {
+    (void)ctx;
+    { uint16_t ret = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; return ((ctx->pb << 16) | ret) + 1; } /* rts */
+    return 0;
+}
+
+/* SNES Basic Block 0x005192 - 0x00519C */
+uint32_t bb_005192(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x005192 */
+    /* unknown snes opcode 0x00 at 0x005193 */
+    ctx->p = ((ctx->x == 0x4660) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p = ((ctx->y == 0x0668) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    if (!(ctx->p & 0x02)) return 0x005208;
+    else return 0x00519E;
+    return 0;
+}
+
+/* SNES Basic Block 0x005194 - 0x00519C */
+uint32_t bb_005194(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p = ((ctx->x == 0x4660) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p = ((ctx->y == 0x0668) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    if (!(ctx->p & 0x02)) return 0x005208;
+    else return 0x00519E;
+    return 0;
+}
+
+/* SNES Basic Block 0x00519E - 0x0051A4 */
+uint32_t bb_00519E(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x00519E */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p = ((ctx->x == 0x466A) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    if (ctx->p & 0x02) return 0x00520E;
+    else return 0x0051A6;
+    return 0;
+}
+
+/* SNES Basic Block 0x0051A6 - 0x0051AC */
+uint32_t bb_0051A6(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x46 at 0x0051A6 */
+    ctx->p &= ~0x01;
+    ctx->p = ((ctx->y == 0x466E) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p &= ~0x01;
+    if (!(ctx->p & 0x02)) return 0x00521A;
+    else return 0x0051AE;
+    return 0;
+}
+
+/* SNES Basic Block 0x0051A7 - 0x0051AC */
+uint32_t bb_0051A7(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p &= ~0x01;
+    ctx->p = ((ctx->y == 0x466E) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p &= ~0x01;
+    if (!(ctx->p & 0x02)) return 0x00521A;
+    else return 0x0051AE;
+    return 0;
+}
+
+/* SNES Basic Block 0x0051A8 - 0x0051AC */
+uint32_t bb_0051A8(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p = ((ctx->y == 0x466E) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p &= ~0x01;
+    if (!(ctx->p & 0x02)) return 0x00521A;
+    else return 0x0051AE;
+    return 0;
+}
+
+/* SNES Basic Block 0x0051AA - 0x0051AC */
+uint32_t bb_0051AA(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x46 at 0x0051AA */
+    ctx->p &= ~0x01;
+    if (!(ctx->p & 0x02)) return 0x00521A;
+    else return 0x0051AE;
+    return 0;
+}
+
+/* SNES Basic Block 0x0051AD - 0x0051B4 */
+uint32_t bb_0051AD(SnesCpuContext* ctx) {
+    (void)ctx;
+    return snes_read16(ctx, (ctx->pb << 16) | 0x1846); /* jmp (0x1846) */
+    ctx->p = ((ctx->x == 0x066C) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p &= ~0x01;
+    if (ctx->p & 0x02) return 0x005224;
+    else return 0x0051B6;
+    return 0;
+}
+
+/* SNES Basic Block 0x0051AE - 0x0051B4 */
+uint32_t bb_0051AE(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x46 at 0x0051AE */
+    ctx->p &= ~0x01;
+    ctx->p = ((ctx->x == 0x066C) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p &= ~0x01;
+    if (ctx->p & 0x02) return 0x005224;
+    else return 0x0051B6;
+    return 0;
+}
+
+/* SNES Basic Block 0x0051B6 - 0x0051DC */
+uint32_t bb_0051B6(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x0051B6 */
+    /* unknown snes opcode 0xFF at 0x0051B7 */
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* nop */
+    ctx->y = 0xE806;
+    if (ctx->p & 0x10) { ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->x = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }
+    ctx->x = 0xE806;
+    ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (((ctx->a & 0xFF) << 1) & 0xFF)) : ((ctx->a << 1) & 0xFFFF);
+    ctx->y = snes_read16(ctx, (ctx->dp + 0x06) & 0xFFFF);
+    ctx->p |= 0x08;
+    /* nop */
+    ctx->p = ((ctx->y == 0xF806) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    if (ctx->p & 0x10) { ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->x = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }
+    ctx->p &= ~0x06; /* rep #0x06 */
+    ctx->p |= 0x08;
+    ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (((ctx->a & 0xFF) << 1) & 0xFF)) : ((ctx->a << 1) & 0xFFFF);
+    /* unknown snes opcode 0xC4 at 0x0051CE */
+    /* unknown snes opcode 0x06 at 0x0051CF */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    /* nop */
+    ctx->p = ((ctx->x == 0x0806) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    if (ctx->p & 0x10) { ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->x = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }
+    ctx->p |= 0x06; /* sep #0x06 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (((ctx->a & 0xFF) << 1) & 0xFF)) : ((ctx->a << 1) & 0xFFFF);
+    /* unknown snes opcode 0xE4 at 0x0051DA */
+    /* unknown snes opcode 0x06 at 0x0051DB */
+    if (!(ctx->p & 0x80)) return 0x0051A8;
+    else return 0x0051DE;
+    return 0;
+}
+
+/* SNES Basic Block 0x0051B9 - 0x0051DC */
+uint32_t bb_0051B9(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* nop */
+    ctx->y = 0xE806;
+    if (ctx->p & 0x10) { ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->x = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }
+    ctx->x = 0xE806;
+    ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (((ctx->a & 0xFF) << 1) & 0xFF)) : ((ctx->a << 1) & 0xFFFF);
+    ctx->y = snes_read16(ctx, (ctx->dp + 0x06) & 0xFFFF);
+    ctx->p |= 0x08;
+    /* nop */
+    ctx->p = ((ctx->y == 0xF806) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    if (ctx->p & 0x10) { ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->x = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }
+    ctx->p &= ~0x06; /* rep #0x06 */
+    ctx->p |= 0x08;
+    ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (((ctx->a & 0xFF) << 1) & 0xFF)) : ((ctx->a << 1) & 0xFFFF);
+    /* unknown snes opcode 0xC4 at 0x0051CE */
+    /* unknown snes opcode 0x06 at 0x0051CF */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    /* nop */
+    ctx->p = ((ctx->x == 0x0806) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    if (ctx->p & 0x10) { ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->x = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }
+    ctx->p |= 0x06; /* sep #0x06 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (((ctx->a & 0xFF) << 1) & 0xFF)) : ((ctx->a << 1) & 0xFFFF);
+    /* unknown snes opcode 0xE4 at 0x0051DA */
+    /* unknown snes opcode 0x06 at 0x0051DB */
+    if (!(ctx->p & 0x80)) return 0x0051A8;
+    else return 0x0051DE;
+    return 0;
+}
+
+/* SNES Basic Block 0x0051C3 - 0x0051DC */
+uint32_t bb_0051C3(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x0051C3 */
+    ctx->p |= 0x08;
+    /* nop */
+    ctx->p = ((ctx->y == 0xF806) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    if (ctx->p & 0x10) { ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->x = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }
+    ctx->p &= ~0x06; /* rep #0x06 */
+    ctx->p |= 0x08;
+    ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (((ctx->a & 0xFF) << 1) & 0xFF)) : ((ctx->a << 1) & 0xFFFF);
+    /* unknown snes opcode 0xC4 at 0x0051CE */
+    /* unknown snes opcode 0x06 at 0x0051CF */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    /* nop */
+    ctx->p = ((ctx->x == 0x0806) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    if (ctx->p & 0x10) { ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->x = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }
+    ctx->p |= 0x06; /* sep #0x06 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (((ctx->a & 0xFF) << 1) & 0xFF)) : ((ctx->a << 1) & 0xFFFF);
+    /* unknown snes opcode 0xE4 at 0x0051DA */
+    /* unknown snes opcode 0x06 at 0x0051DB */
+    if (!(ctx->p & 0x80)) return 0x0051A8;
+    else return 0x0051DE;
+    return 0;
+}
+
+/* SNES Basic Block 0x0051CC - 0x0051DC */
+uint32_t bb_0051CC(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p |= 0x08;
+    ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (((ctx->a & 0xFF) << 1) & 0xFF)) : ((ctx->a << 1) & 0xFFFF);
+    /* unknown snes opcode 0xC4 at 0x0051CE */
+    /* unknown snes opcode 0x06 at 0x0051CF */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    /* nop */
+    ctx->p = ((ctx->x == 0x0806) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    if (ctx->p & 0x10) { ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->x = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }
+    ctx->p |= 0x06; /* sep #0x06 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (((ctx->a & 0xFF) << 1) & 0xFF)) : ((ctx->a << 1) & 0xFFFF);
+    /* unknown snes opcode 0xE4 at 0x0051DA */
+    /* unknown snes opcode 0x06 at 0x0051DB */
+    if (!(ctx->p & 0x80)) return 0x0051A8;
+    else return 0x0051DE;
+    return 0;
+}
+
+/* SNES Basic Block 0x0051D6 - 0x0051DC */
+uint32_t bb_0051D6(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p |= 0x06; /* sep #0x06 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (((ctx->a & 0xFF) << 1) & 0xFF)) : ((ctx->a << 1) & 0xFFFF);
+    /* unknown snes opcode 0xE4 at 0x0051DA */
+    /* unknown snes opcode 0x06 at 0x0051DB */
+    if (!(ctx->p & 0x80)) return 0x0051A8;
+    else return 0x0051DE;
+    return 0;
+}
+
+/* SNES Basic Block 0x0051DB - 0x0051DC */
+uint32_t bb_0051DB(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x0051DB */
+    if (!(ctx->p & 0x80)) return 0x0051A8;
+    else return 0x0051DE;
+    return 0;
+}
+
+/* SNES Basic Block 0x0051DC - 0x0051DC */
+uint32_t bb_0051DC(SnesCpuContext* ctx) {
+    (void)ctx;
+    if (!(ctx->p & 0x80)) return 0x0051A8;
+    else return 0x0051DE;
+    return 0;
+}
+
+/* SNES Basic Block 0x0051DE - 0x0051E8 */
+uint32_t bb_0051DE(SnesCpuContext* ctx) {
+    (void)ctx;
+    snes_write16(ctx, (ctx->db << 16) | 0x1006, ctx->a);
+    /* unknown snes opcode 0xD2 at 0x0051E1 */
+    snes_write16(ctx, (ctx->db << 16) | 0x1006, ctx->x);
+    ctx->p |= 0xAC; /* sep #0xac */
+    /* unknown snes opcode 0x06 at 0x0051E7 */
+    if (!(ctx->p & 0x80)) return 0x0051DC;
+    else return 0x0051EA;
+    return 0;
+}
+
+/* SNES Basic Block 0x0051E7 - 0x0051E8 */
+uint32_t bb_0051E7(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x0051E7 */
+    if (!(ctx->p & 0x80)) return 0x0051DC;
+    else return 0x0051EA;
+    return 0;
+}
+
+/* SNES Basic Block 0x0051EA - 0x005205 */
+uint32_t bb_0051EA(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->x = snes_read16(ctx, (ctx->db << 16) | 0x1806);
+    /* unknown snes opcode 0xF2 at 0x0051ED */
+    ctx->p = ((ctx->y == snes_read16(ctx, (ctx->db << 16) | 0x1806)) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x02 at 0x0051F1 */
+    snes_write8(ctx, (ctx->db << 16) | 0x1806, (snes_read8(ctx, (ctx->db << 16) | 0x1806) - 1) & 0xFF);
+    /* unknown snes opcode 0x12 at 0x0051F5 */
+    ctx->p = ((ctx->x == snes_read16(ctx, (ctx->db << 16) | 0xFF06)) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x00 at 0x0051F9 */
+    /* unknown snes opcode 0xD2 at 0x0051FA */
+    snes_write8(ctx, (ctx->db << 16) | 0x0006, (snes_read8(ctx, (ctx->db << 16) | 0x0006) + 1) & 0xFF);
+    /* unknown snes opcode 0xD2 at 0x0051FE */
+    snes_write8(ctx, (ctx->db << 16) | 0x1006, (snes_read8(ctx, (ctx->db << 16) | 0x1006) + 1) & 0xFF);
+    ctx->p &= ~0x08;
+    ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) - 1) & 0xFF) : ((ctx->y - 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x005204 */
+    if (!(ctx->p & 0x80)) return 0x0051E7;
+    else return 0x005207;
+    return 0;
+}
+
+/* SNES Basic Block 0x0051F2 - 0x005205 */
+uint32_t bb_0051F2(SnesCpuContext* ctx) {
+    (void)ctx;
+    snes_write16(ctx, (ctx->db << 16) | 0x1806, snes_read16(ctx, (ctx->db << 16) | 0x1806) - 1);
+    /* unknown snes opcode 0x12 at 0x0051F5 */
+    ctx->p = ((ctx->x == snes_read16(ctx, (ctx->db << 16) | 0xFF06)) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x00 at 0x0051F9 */
+    /* unknown snes opcode 0xD2 at 0x0051FA */
+    snes_write16(ctx, (ctx->db << 16) | 0x0006, snes_read16(ctx, (ctx->db << 16) | 0x0006) + 1);
+    /* unknown snes opcode 0xD2 at 0x0051FE */
+    snes_write16(ctx, (ctx->db << 16) | 0x1006, snes_read16(ctx, (ctx->db << 16) | 0x1006) + 1);
+    ctx->p &= ~0x08;
+    ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) - 1) & 0xFF) : ((ctx->y - 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x005204 */
+    if (!(ctx->p & 0x80)) return 0x0051E7;
+    else return 0x005207;
+    return 0;
+}
+
+/* SNES Basic Block 0x005200 - 0x005201 */
+uint32_t bb_005200(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x005200 */
+    if (!(ctx->p & 0x80)) return 0x0051DB;
+    else return 0x005203;
+    return 0;
+}
+
+/* SNES Basic Block 0x005203 - 0x005205 */
+uint32_t bb_005203(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) - 1) & 0xFF) : ((ctx->y - 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x005204 */
+    if (!(ctx->p & 0x80)) return 0x0051E7;
+    else return 0x005207;
+    return 0;
+}
+
+/* SNES Basic Block 0x005207 - 0x00522D */
+uint32_t bb_005207(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p = (((ctx->a & 0xFF) & 0x06) == 0) ? (ctx->p | 0x02) : (ctx->p & ~0x02);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->x = snes_read16(ctx, (ctx->dp + 0x06) & 0xFFFF);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->p |= 0x08;
+    ctx->y = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
+    /* unknown snes opcode 0x06 at 0x005210 */
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->x = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
+    /* unknown snes opcode 0x06 at 0x005214 */
+    ctx->p |= 0x08;
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0xC6 at 0x005217 */
+    /* unknown snes opcode 0x06 at 0x005218 */
+    ctx->p |= 0x08;
+    ctx->p |= 0x08;
+    ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) + 1) & 0xFF) : ((ctx->y + 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x00521C */
+    ctx->p |= 0x08;
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) - 1) & 0xFF) : ((ctx->x - 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x005220 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0xE6 at 0x005223 */
+    /* unknown snes opcode 0x06 at 0x005224 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p |= 0x08;
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x005228 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    /* nop */
+    /* unknown snes opcode 0x06 at 0x00522C */
+    if (!(ctx->p & 0x80)) return 0x00521F;
+    else return 0x00522F;
+    return 0;
+}
+
+/* SNES Basic Block 0x005208 - 0x00522D */
+uint32_t bb_005208(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x005208 */
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->x = snes_read16(ctx, (ctx->dp + 0x06) & 0xFFFF);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->p |= 0x08;
+    ctx->y = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
+    /* unknown snes opcode 0x06 at 0x005210 */
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->x = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
+    /* unknown snes opcode 0x06 at 0x005214 */
+    ctx->p |= 0x08;
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0xC6 at 0x005217 */
+    /* unknown snes opcode 0x06 at 0x005218 */
+    ctx->p |= 0x08;
+    ctx->p |= 0x08;
+    ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) + 1) & 0xFF) : ((ctx->y + 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x00521C */
+    ctx->p |= 0x08;
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) - 1) & 0xFF) : ((ctx->x - 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x005220 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0xE6 at 0x005223 */
+    /* unknown snes opcode 0x06 at 0x005224 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p |= 0x08;
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x005228 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    /* nop */
+    /* unknown snes opcode 0x06 at 0x00522C */
+    if (!(ctx->p & 0x80)) return 0x00521F;
+    else return 0x00522F;
+    return 0;
+}
+
+/* SNES Basic Block 0x00520E - 0x00522D */
+uint32_t bb_00520E(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p |= 0x08;
+    ctx->y = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
+    /* unknown snes opcode 0x06 at 0x005210 */
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->x = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
+    /* unknown snes opcode 0x06 at 0x005214 */
+    ctx->p |= 0x08;
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0xC6 at 0x005217 */
+    /* unknown snes opcode 0x06 at 0x005218 */
+    ctx->p |= 0x08;
+    ctx->p |= 0x08;
+    ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) + 1) & 0xFF) : ((ctx->y + 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x00521C */
+    ctx->p |= 0x08;
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) - 1) & 0xFF) : ((ctx->x - 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x005220 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0xE6 at 0x005223 */
+    /* unknown snes opcode 0x06 at 0x005224 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p |= 0x08;
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x005228 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    /* nop */
+    /* unknown snes opcode 0x06 at 0x00522C */
+    if (!(ctx->p & 0x80)) return 0x00521F;
+    else return 0x00522F;
+    return 0;
+}
+
+/* SNES Basic Block 0x00521A - 0x00522D */
+uint32_t bb_00521A(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p |= 0x08;
+    ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) + 1) & 0xFF) : ((ctx->y + 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x00521C */
+    ctx->p |= 0x08;
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) - 1) & 0xFF) : ((ctx->x - 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x005220 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0xE6 at 0x005223 */
+    /* unknown snes opcode 0x06 at 0x005224 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p |= 0x08;
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x005228 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    /* nop */
+    /* unknown snes opcode 0x06 at 0x00522C */
+    if (!(ctx->p & 0x80)) return 0x00521F;
+    else return 0x00522F;
+    return 0;
+}
+
+/* SNES Basic Block 0x00521F - 0x00522D */
+uint32_t bb_00521F(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) - 1) & 0xFF) : ((ctx->x - 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x005220 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0xE6 at 0x005223 */
+    /* unknown snes opcode 0x06 at 0x005224 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p |= 0x08;
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x005228 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    /* nop */
+    /* unknown snes opcode 0x06 at 0x00522C */
+    if (!(ctx->p & 0x80)) return 0x00521F;
+    else return 0x00522F;
+    return 0;
+}
+
+/* SNES Basic Block 0x005220 - 0x00522D */
+uint32_t bb_005220(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x005220 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0xE6 at 0x005223 */
+    /* unknown snes opcode 0x06 at 0x005224 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p |= 0x08;
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x005228 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    /* nop */
+    /* unknown snes opcode 0x06 at 0x00522C */
+    if (!(ctx->p & 0x80)) return 0x00521F;
+    else return 0x00522F;
+    return 0;
+}
+
+/* SNES Basic Block 0x005224 - 0x00522D */
+uint32_t bb_005224(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x005224 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p |= 0x08;
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x005228 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    /* nop */
+    /* unknown snes opcode 0x06 at 0x00522C */
+    if (!(ctx->p & 0x80)) return 0x00521F;
+    else return 0x00522F;
+    return 0;
+}
+
+/* SNES Basic Block 0x005228 - 0x00522D */
+uint32_t bb_005228(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x005228 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    /* nop */
+    /* unknown snes opcode 0x06 at 0x00522C */
+    if (!(ctx->p & 0x80)) return 0x00521F;
+    else return 0x00522F;
+    return 0;
+}
+
+/* SNES Basic Block 0x00522C - 0x00522D */
+uint32_t bb_00522C(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x00522C */
+    if (!(ctx->p & 0x80)) return 0x00521F;
+    else return 0x00522F;
+    return 0;
+}
+
+/* SNES Basic Block 0x00522F - 0x005232 */
+uint32_t bb_00522F(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->db);
+    /* unknown snes opcode 0x06 at 0x005230 */
+    ctx->p &= ~0x01;
+    if (ctx->p & 0x02) return 0x005200;
+    else return 0x005234;
+    return 0;
+}
+
+/* SNES Basic Block 0x005234 - 0x00523A */
+uint32_t bb_005234(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x005234 */
+    ctx->p &= ~0x01;
+    /* unknown snes opcode 0x00 at 0x005236 */
+    snes_write16(ctx, (ctx->db << 16) | 0x1806, snes_read16(ctx, (ctx->db << 16) | 0x1806) - 1);
+    if (!(ctx->p & 0x80)) return 0x005228;
+    else return 0x00523C;
+    return 0;
+}
+
+/* SNES Basic Block 0x00523C - 0x00524A */
+uint32_t bb_00523C(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x00523C */
+    /* unknown snes opcode 0xFF at 0x00523D */
+    /* unknown snes opcode 0x00 at 0x00523E */
+    /* unknown snes opcode 0xD2 at 0x00523F */
+    snes_write16(ctx, (ctx->db << 16) | 0x0006, snes_read16(ctx, (ctx->db << 16) | 0x0006) + 1);
+    /* unknown snes opcode 0xD2 at 0x005243 */
+    snes_write16(ctx, (ctx->db << 16) | 0x1006, snes_read16(ctx, (ctx->db << 16) | 0x1006) + 1);
+    ctx->p &= ~0x08;
+    ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) - 1) & 0xFF) : ((ctx->y - 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x005249 */
+    if (!(ctx->p & 0x80)) return 0x00522C;
+    else return 0x00524C;
+    return 0;
+}
+
+/* SNES Basic Block 0x005245 - 0x005246 */
+uint32_t bb_005245(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x005245 */
+    if (!(ctx->p & 0x80)) return 0x005220;
+    else return 0x005248;
+    return 0;
+}
+
+/* SNES Basic Block 0x005248 - 0x00524A */
+uint32_t bb_005248(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) - 1) & 0xFF) : ((ctx->y - 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x005249 */
+    if (!(ctx->p & 0x80)) return 0x00522C;
+    else return 0x00524C;
+    return 0;
+}
+
+/* SNES Basic Block 0x00524C - 0x005272 */
+uint32_t bb_00524C(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p = ((ctx->a & 0xE806) == 0) ? (ctx->p | 0x02) : (ctx->p & ~0x02);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->y = 0xE806;
+    ctx->p |= 0x08;
+    ctx->x = 0xE806;
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->y = snes_read16(ctx, (ctx->dp + 0x06) & 0xFFFF);
+    ctx->p |= 0x08;
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->p = ((ctx->y == 0xF806) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p |= 0x08;
+    ctx->p &= ~0x06; /* rep #0x06 */
+    ctx->p |= 0x08;
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    /* unknown snes opcode 0xC4 at 0x005264 */
+    /* unknown snes opcode 0x06 at 0x005265 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->p = ((ctx->x == 0x0806) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p |= 0x08;
+    ctx->p |= 0x06; /* sep #0x06 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    /* unknown snes opcode 0xE4 at 0x005270 */
+    /* unknown snes opcode 0x06 at 0x005271 */
+    if (!(ctx->p & 0x80)) return 0x005264;
+    else return 0x005274;
+    return 0;
+}
+
+/* SNES Basic Block 0x005264 - 0x005272 */
+uint32_t bb_005264(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0xC4 at 0x005264 */
+    /* unknown snes opcode 0x06 at 0x005265 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->p = ((ctx->x == 0x0806) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p |= 0x08;
+    ctx->p |= 0x06; /* sep #0x06 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    /* unknown snes opcode 0xE4 at 0x005270 */
+    /* unknown snes opcode 0x06 at 0x005271 */
+    if (!(ctx->p & 0x80)) return 0x005264;
+    else return 0x005274;
+    return 0;
+}
+
+/* SNES Basic Block 0x00526D - 0x005272 */
+uint32_t bb_00526D(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x00526D */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    /* unknown snes opcode 0xE4 at 0x005270 */
+    /* unknown snes opcode 0x06 at 0x005271 */
+    if (!(ctx->p & 0x80)) return 0x005264;
+    else return 0x005274;
+    return 0;
+}
+
+/* SNES Basic Block 0x005272 - 0x005272 */
+uint32_t bb_005272(SnesCpuContext* ctx) {
+    (void)ctx;
+    if (!(ctx->p & 0x80)) return 0x005264;
+    else return 0x005274;
+    return 0;
+}
+
+/* SNES Basic Block 0x005274 - 0x005277 */
+uint32_t bb_005274(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->db);
+    /* unknown snes opcode 0x06 at 0x005275 */
+    ctx->p &= ~0x01;
+    if (ctx->p & 0x02) return 0x005245;
+    else return 0x005279;
+    return 0;
+}
+
+/* SNES Basic Block 0x005279 - 0x00527F */
+uint32_t bb_005279(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x005279 */
+    ctx->p &= ~0x01;
+    /* unknown snes opcode 0x00 at 0x00527B */
+    snes_write16(ctx, (ctx->db << 16) | 0x1806, snes_read16(ctx, (ctx->db << 16) | 0x1806) - 1);
+    if (!(ctx->p & 0x80)) return 0x00526D;
+    else return 0x005281;
+    return 0;
+}
+
+/* SNES Basic Block 0x005281 - 0x00528F */
+uint32_t bb_005281(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x005281 */
+    /* unknown snes opcode 0xFF at 0x005282 */
+    /* unknown snes opcode 0x00 at 0x005283 */
+    /* unknown snes opcode 0xD3 at 0x005284 */
+    snes_write16(ctx, (ctx->db << 16) | 0x0006, snes_read16(ctx, (ctx->db << 16) | 0x0006) + 1);
+    /* unknown snes opcode 0xD3 at 0x005288 */
+    snes_write16(ctx, (ctx->db << 16) | 0x1006, snes_read16(ctx, (ctx->db << 16) | 0x1006) + 1);
+    /* unknown snes opcode 0xD9 at 0x00528C */
+    ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) - 1) & 0xFF) : ((ctx->y - 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x00528E */
+    if (!(ctx->p & 0x80)) return 0x005272;
+    else return 0x005291;
+    return 0;
+}
+
+/* SNES Basic Block 0x005291 - 0x0052B7 */
+uint32_t bb_005291(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p = ((ctx->a & 0xE806) == 0) ? (ctx->p | 0x02) : (ctx->p & ~0x02);
+    ctx->a -= 0x06A6;
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0xF9 at 0x005298 */
+    ctx->y = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
+    /* unknown snes opcode 0x06 at 0x00529A */
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->a |= 0x06AA;
+    ctx->p |= 0x08;
+    ctx->a -= 0x06C6;
+    ctx->p |= 0x08;
+    /* unknown snes opcode 0xF9 at 0x0052A4 */
+    ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) + 1) & 0xFF) : ((ctx->y + 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x0052A6 */
+    ctx->p |= 0x08;
+    ctx->a |= 0x06CA;
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->a -= 0x06E6;
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    /* unknown snes opcode 0xF9 at 0x0052B0 */
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x0052B2 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->a |= 0x06EA;
+    if (!(ctx->p & 0x80)) return 0x0052AA;
+    else return 0x0052B9;
+    return 0;
+}
+
+/* SNES Basic Block 0x0052AA - 0x0052B7 */
+uint32_t bb_0052AA(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x0052AA */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->a -= 0x06E6;
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    /* unknown snes opcode 0xF9 at 0x0052B0 */
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x0052B2 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->a |= 0x06EA;
+    if (!(ctx->p & 0x80)) return 0x0052AA;
+    else return 0x0052B9;
+    return 0;
+}
+
+/* SNES Basic Block 0x0052B6 - 0x0052B7 */
+uint32_t bb_0052B6(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x0052B6 */
+    if (!(ctx->p & 0x80)) return 0x0052AA;
+    else return 0x0052B9;
+    return 0;
+}
+
+/* SNES Basic Block 0x0052B9 - 0x0052D4 */
+uint32_t bb_0052B9(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->db);
+    /* unknown snes opcode 0x06 at 0x0052BA */
+    ctx->p &= ~0x01;
+    /* unknown snes opcode 0xF1 at 0x0052BC */
+    ctx->p = ((ctx->y == snes_read16(ctx, (ctx->db << 16) | 0x1806)) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x01 at 0x0052C0 */
+    snes_write16(ctx, (ctx->db << 16) | 0x1806, snes_read16(ctx, (ctx->db << 16) | 0x1806) - 1);
+    /* unknown snes opcode 0x11 at 0x0052C4 */
+    ctx->p = ((ctx->x == snes_read16(ctx, (ctx->db << 16) | 0xFF06)) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x00 at 0x0052C8 */
+    /* unknown snes opcode 0xD2 at 0x0052C9 */
+    snes_write16(ctx, (ctx->db << 16) | 0x0006, snes_read16(ctx, (ctx->db << 16) | 0x0006) + 1);
+    /* unknown snes opcode 0xD2 at 0x0052CD */
+    snes_write16(ctx, (ctx->db << 16) | 0x1006, snes_read16(ctx, (ctx->db << 16) | 0x1006) + 1);
+    ctx->p &= ~0x08;
+    ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) - 1) & 0xFF) : ((ctx->y - 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x0052D3 */
+    if (!(ctx->p & 0x80)) return 0x0052B6;
+    else return 0x0052D6;
+    return 0;
+}
+
+/* SNES Basic Block 0x0052CF - 0x0052D0 */
+uint32_t bb_0052CF(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x0052CF */
+    if (!(ctx->p & 0x80)) return 0x0052AA;
+    else return 0x0052D2;
+    return 0;
+}
+
+/* SNES Basic Block 0x0052D2 - 0x0052D4 */
+uint32_t bb_0052D2(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) - 1) & 0xFF) : ((ctx->y - 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x0052D3 */
+    if (!(ctx->p & 0x80)) return 0x0052B6;
+    else return 0x0052D6;
+    return 0;
+}
+
+/* SNES Basic Block 0x0052D6 - 0x0052FC */
+uint32_t bb_0052D6(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p = ((ctx->a & 0xE806) == 0) ? (ctx->p | 0x02) : (ctx->p & ~0x02);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->x = snes_read16(ctx, (ctx->dp + 0x06) & 0xFFFF);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->p |= 0x08;
+    ctx->y = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
+    /* unknown snes opcode 0x06 at 0x0052DF */
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->x = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
+    /* unknown snes opcode 0x06 at 0x0052E3 */
+    ctx->p |= 0x08;
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0xC6 at 0x0052E6 */
+    /* unknown snes opcode 0x06 at 0x0052E7 */
+    ctx->p |= 0x08;
+    ctx->p |= 0x08;
+    ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) + 1) & 0xFF) : ((ctx->y + 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x0052EB */
+    ctx->p |= 0x08;
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) - 1) & 0xFF) : ((ctx->x - 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x0052EF */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0xE6 at 0x0052F2 */
+    /* unknown snes opcode 0x06 at 0x0052F3 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p |= 0x08;
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x0052F7 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    /* nop */
+    /* unknown snes opcode 0x06 at 0x0052FB */
+    if (!(ctx->p & 0x80)) return 0x0052EE;
+    else return 0x0052FE;
+    return 0;
+}
+
+/* SNES Basic Block 0x0052EE - 0x0052FC */
+uint32_t bb_0052EE(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) - 1) & 0xFF) : ((ctx->x - 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x0052EF */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0xE6 at 0x0052F2 */
+    /* unknown snes opcode 0x06 at 0x0052F3 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p |= 0x08;
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0x06 at 0x0052F7 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    /* nop */
+    /* unknown snes opcode 0x06 at 0x0052FB */
+    if (!(ctx->p & 0x80)) return 0x0052EE;
+    else return 0x0052FE;
+    return 0;
+}
+
+/* SNES Basic Block 0x0052F7 - 0x0052FC */
+uint32_t bb_0052F7(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x0052F7 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    /* nop */
+    /* unknown snes opcode 0x06 at 0x0052FB */
+    if (!(ctx->p & 0x80)) return 0x0052EE;
+    else return 0x0052FE;
+    return 0;
+}
+
+/* SNES Basic Block 0x0052FE - 0x005301 */
+uint32_t bb_0052FE(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->db);
+    /* unknown snes opcode 0x06 at 0x0052FF */
+    ctx->p &= ~0x01;
+    if (ctx->p & 0x02) return 0x0052CF;
+    else return 0x005303;
+    return 0;
+}
+
+/* SNES Basic Block 0x005303 - 0x005309 */
+uint32_t bb_005303(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x005303 */
+    ctx->p &= ~0x01;
+    /* unknown snes opcode 0x00 at 0x005305 */
+    snes_write16(ctx, (ctx->db << 16) | 0x1806, snes_read16(ctx, (ctx->db << 16) | 0x1806) - 1);
+    if (!(ctx->p & 0x80)) return 0x0052F7;
+    else return 0x00530B;
+    return 0;
+}
+
+/* SNES Basic Block 0x00530B - 0x00530E */
+uint32_t bb_00530B(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x00530B */
+    /* unknown snes opcode 0xFF at 0x00530C */
+    ctx->p &= ~0x08;
+    if (!(ctx->p & 0x02)) return 0x00531A;
+    else return 0x005310;
+    return 0;
+}
+
+/* SNES Basic Block 0x005310 - 0x00531A */
+uint32_t bb_005310(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x005310 */
+    ctx->p &= ~0x08;
+    ctx->p = ((ctx->x == 0x0608) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->p = ((ctx->y == 0x0628) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    if (!(ctx->p & 0x02)) return 0x005328;
+    else return 0x00531C;
+    return 0;
+}
+
+/* SNES Basic Block 0x00531A - 0x00531A */
+uint32_t bb_00531A(SnesCpuContext* ctx) {
+    (void)ctx;
+    if (!(ctx->p & 0x02)) return 0x005328;
+    else return 0x00531C;
+    return 0;
+}
+
+/* SNES Basic Block 0x00531C - 0x005326 */
+uint32_t bb_00531C(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x00531C */
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->p = ((ctx->x == 0x0634) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->p = ((ctx->x == 0x462A) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    if (ctx->p & 0x02) return 0x005350;
+    else return 0x005328;
+    return 0;
+}
+
+/* SNES Basic Block 0x005328 - 0x005329 */
+uint32_t bb_005328(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x46 at 0x005328 */
+    if (ctx->p & 0x02) return 0x00530B;
+    else return 0x00532B;
+    return 0;
+}
+
+/* SNES Basic Block 0x00532B - 0x005332 */
+uint32_t bb_00532B(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x44 at 0x00532B */
+    /* unknown snes opcode 0x06 at 0x00532C */
+    ctx->p |= 0x08;
+    ctx->p = ((ctx->y == 0x0648) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p |= 0x08;
+    if (ctx->p & 0x02) return 0x00537C;
+    else return 0x005334;
+    return 0;
+}
+
+/* SNES Basic Block 0x005334 - 0x005336 */
+uint32_t bb_005334(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x46 at 0x005334 */
+    /* unknown snes opcode 0x00 at 0x005335 */
+    if (!(ctx->p & 0x02)) return 0x005374;
+    else return 0x005338;
+    return 0;
+}
+
+/* SNES Basic Block 0x005338 - 0x00533E */
+uint32_t bb_005338(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x005338 */
+    /* unknown snes opcode 0x00 at 0x005339 */
+    ctx->p = ((ctx->x == 0x0664) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p |= 0x08;
+    if (!(ctx->p & 0x02)) return 0x00536C;
+    else return 0x005340;
+    return 0;
+}
+
+/* SNES Basic Block 0x005340 - 0x00534A */
+uint32_t bb_005340(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x005340 */
+    ctx->p |= 0x08;
+    ctx->p = ((ctx->x == 0x464A) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p = ((ctx->y == 0x0668) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    if (!(ctx->p & 0x02)) return 0x0053B6;
+    else return 0x00534C;
     return 0;
 }
 
@@ -979,6 +2894,16 @@ uint32_t bb_005369(SnesCpuContext* ctx) {
     return 0;
 }
 
+/* SNES Basic Block 0x00536C - 0x00536E */
+uint32_t bb_00536C(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    /* unknown snes opcode 0x06 at 0x00536D */
+    if (ctx->p & 0x02) return 0x005350;
+    else return 0x005370;
+    return 0;
+}
+
 /* SNES Basic Block 0x005370 - 0x005370 */
 uint32_t bb_005370(SnesCpuContext* ctx) {
     (void)ctx;
@@ -1001,6 +2926,21 @@ uint32_t bb_005373(SnesCpuContext* ctx) {
     (void)ctx;
     if (!(ctx->p & 0x02)) return 0x0053AB;
     else return 0x005375;
+    return 0;
+}
+
+/* SNES Basic Block 0x005374 - 0x00537F */
+uint32_t bb_005374(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x36 at 0x005374 */
+    /* unknown snes opcode 0x06 at 0x005375 */
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->p = ((ctx->x == 0x4636) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->p = ((ctx->x == 0x462A) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    if (ctx->p & 0x02) return 0x0053A9;
+    else return 0x005381;
     return 0;
 }
 
@@ -1027,6 +2967,17 @@ uint32_t bb_005378(SnesCpuContext* ctx) {
     /* unknown snes opcode 0x46 at 0x005379 */
     ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
     ctx->p = (((ctx->x & 0xFF) == 0x2A) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x46 at 0x00537D */
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    if (ctx->p & 0x02) return 0x0053A9;
+    else return 0x005381;
+    return 0;
+}
+
+/* SNES Basic Block 0x00537C - 0x00537F */
+uint32_t bb_00537C(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | ((((ctx->a & 0xFF) << 1) | (ctx->p & 1)) & 0xFF)) : ((((ctx->a << 1) | (ctx->p & 1)) & 0xFFFF));
     /* unknown snes opcode 0x46 at 0x00537D */
     ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
     if (ctx->p & 0x02) return 0x0053A9;
@@ -1063,6 +3014,42 @@ uint32_t bb_005384(SnesCpuContext* ctx) {
     ctx->p |= 0x08;
     if (ctx->p & 0x02) return 0x0053E1;
     else return 0x005399;
+    return 0;
+}
+
+/* SNES Basic Block 0x005399 - 0x00539B */
+uint32_t bb_005399(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x46 at 0x005399 */
+    /* unknown snes opcode 0x00 at 0x00539A */
+    if (!(ctx->p & 0x02)) return 0x005403;
+    else return 0x00539D;
+    return 0;
+}
+
+/* SNES Basic Block 0x00539D - 0x0053A3 */
+uint32_t bb_00539D(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x00539D */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p = (((ctx->y & 0xFF) == 0x68) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x06 at 0x0053A1 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    if (!(ctx->p & 0x02)) return 0x00540F;
+    else return 0x0053A5;
+    return 0;
+}
+
+/* SNES Basic Block 0x0053A5 - 0x0053AB */
+uint32_t bb_0053A5(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x0053A5 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p = (((ctx->x & 0xFF) == 0x6A) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x46 at 0x0053A9 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    if (ctx->p & 0x02) return 0x005415;
+    else return 0x0053AD;
     return 0;
 }
 
@@ -1114,6 +3101,17 @@ uint32_t bb_0053B5(SnesCpuContext* ctx) {
     ctx->p &= ~0x01;
     ctx->p = (((ctx->x & 0xFF) == 0x6C) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
     /* unknown snes opcode 0x06 at 0x0053B9 */
+    ctx->p &= ~0x01;
+    if (ctx->p & 0x02) return 0x00542B;
+    else return 0x0053BD;
+    return 0;
+}
+
+/* SNES Basic Block 0x0053B6 - 0x0053BB */
+uint32_t bb_0053B6(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p &= ~0x01;
+    ctx->p = ((ctx->x == 0x066C) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
     ctx->p &= ~0x01;
     if (ctx->p & 0x02) return 0x00542B;
     else return 0x0053BD;
@@ -1285,6 +3283,28 @@ uint32_t bb_0053F6(SnesCpuContext* ctx) {
     return 0;
 }
 
+/* SNES Basic Block 0x0053FE - 0x005404 */
+uint32_t bb_0053FE(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x0053FE */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p = (((ctx->x & 0xFF) == 0x6A) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x46 at 0x005402 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    if (ctx->p & 0x02) return 0x00546E;
+    else return 0x005406;
+    return 0;
+}
+
+/* SNES Basic Block 0x005403 - 0x005404 */
+uint32_t bb_005403(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    if (ctx->p & 0x02) return 0x00546E;
+    else return 0x005406;
+    return 0;
+}
+
 /* SNES Basic Block 0x005406 - 0x00540C */
 uint32_t bb_005406(SnesCpuContext* ctx) {
     (void)ctx;
@@ -1313,6 +3333,18 @@ uint32_t bb_005408(SnesCpuContext* ctx) {
 uint32_t bb_00540E(SnesCpuContext* ctx) {
     (void)ctx;
     /* unknown snes opcode 0x46 at 0x00540E */
+    ctx->p &= ~0x01;
+    ctx->p = (((ctx->x & 0xFF) == 0x6C) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x06 at 0x005412 */
+    ctx->p &= ~0x01;
+    if (ctx->p & 0x02) return 0x005484;
+    else return 0x005416;
+    return 0;
+}
+
+/* SNES Basic Block 0x00540F - 0x005414 */
+uint32_t bb_00540F(SnesCpuContext* ctx) {
+    (void)ctx;
     ctx->p &= ~0x01;
     ctx->p = (((ctx->x & 0xFF) == 0x6C) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
     /* unknown snes opcode 0x06 at 0x005412 */
@@ -1453,6 +3485,48 @@ uint32_t bb_00543F(SnesCpuContext* ctx) {
     return 0;
 }
 
+/* SNES Basic Block 0x005443 - 0x005449 */
+uint32_t bb_005443(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x005443 */
+    /* unknown snes opcode 0x00 at 0x005444 */
+    ctx->p = (((ctx->x & 0xFF) == 0x64) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x06 at 0x005447 */
+    ctx->p |= 0x08;
+    if (!(ctx->p & 0x02)) return 0x005477;
+    else return 0x00544B;
+    return 0;
+}
+
+/* SNES Basic Block 0x00544B - 0x005455 */
+uint32_t bb_00544B(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x00544B */
+    ctx->p |= 0x08;
+    ctx->p = (((ctx->x & 0xFF) == 0x4A) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x46 at 0x00544F */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p = (((ctx->y & 0xFF) == 0x68) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x06 at 0x005453 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    if (!(ctx->p & 0x02)) return 0x0054C1;
+    else return 0x005457;
+    return 0;
+}
+
+/* SNES Basic Block 0x005457 - 0x00545D */
+uint32_t bb_005457(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x005457 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p = (((ctx->x & 0xFF) == 0x6A) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x46 at 0x00545B */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    if (ctx->p & 0x02) return 0x0054C7;
+    else return 0x00545F;
+    return 0;
+}
+
 /* SNES Basic Block 0x00545B - 0x00545D */
 uint32_t bb_00545B(SnesCpuContext* ctx) {
     (void)ctx;
@@ -1469,6 +3543,65 @@ uint32_t bb_00545C(SnesCpuContext* ctx) {
     ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
     if (ctx->p & 0x02) return 0x0054C7;
     else return 0x00545F;
+    return 0;
+}
+
+/* SNES Basic Block 0x00545F - 0x005465 */
+uint32_t bb_00545F(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x46 at 0x00545F */
+    ctx->p &= ~0x01;
+    ctx->p = (((ctx->y & 0xFF) == 0x6E) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x46 at 0x005463 */
+    ctx->p &= ~0x01;
+    if (!(ctx->p & 0x02)) return 0x0054D3;
+    else return 0x005467;
+    return 0;
+}
+
+/* SNES Basic Block 0x005467 - 0x00546D */
+uint32_t bb_005467(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x46 at 0x005467 */
+    ctx->p &= ~0x01;
+    ctx->p = (((ctx->x & 0xFF) == 0x6C) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x06 at 0x00546B */
+    ctx->p &= ~0x01;
+    if (ctx->p & 0x02) return 0x0054DD;
+    else return 0x00546F;
+    return 0;
+}
+
+/* SNES Basic Block 0x005468 - 0x00546D */
+uint32_t bb_005468(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p &= ~0x01;
+    ctx->p = (((ctx->x & 0xFF) == 0x6C) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x06 at 0x00546B */
+    ctx->p &= ~0x01;
+    if (ctx->p & 0x02) return 0x0054DD;
+    else return 0x00546F;
+    return 0;
+}
+
+/* SNES Basic Block 0x00546C - 0x00546D */
+uint32_t bb_00546C(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p &= ~0x01;
+    if (ctx->p & 0x02) return 0x0054DD;
+    else return 0x00546F;
+    return 0;
+}
+
+/* SNES Basic Block 0x00546E - 0x005472 */
+uint32_t bb_00546E(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x6E at 0x00546E */
+    /* unknown snes opcode 0x06 at 0x00546F */
+    /* unknown snes opcode 0xFF at 0x005470 */
+    ctx->p &= ~0x08;
+    if (!(ctx->p & 0x02)) return 0x00547E;
+    else return 0x005474;
     return 0;
 }
 
@@ -1499,6 +3632,20 @@ uint32_t bb_005474(SnesCpuContext* ctx) {
     return 0;
 }
 
+/* SNES Basic Block 0x005477 - 0x00547E */
+uint32_t bb_005477(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    /* unknown snes opcode 0x06 at 0x005478 */
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->p = (((ctx->y & 0xFF) == 0x28) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x06 at 0x00547C */
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    if (!(ctx->p & 0x02)) return 0x00548C;
+    else return 0x005480;
+    return 0;
+}
+
 /* SNES Basic Block 0x00547A - 0x00547E */
 uint32_t bb_00547A(SnesCpuContext* ctx) {
     (void)ctx;
@@ -1515,6 +3662,23 @@ uint32_t bb_00547E(SnesCpuContext* ctx) {
     (void)ctx;
     if (!(ctx->p & 0x02)) return 0x00548C;
     else return 0x005480;
+    return 0;
+}
+
+/* SNES Basic Block 0x00547F - 0x00548A */
+uint32_t bb_00547F(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x0C at 0x00547F */
+    /* unknown snes opcode 0x06 at 0x005480 */
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->p = (((ctx->x & 0xFF) == 0x34) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x06 at 0x005484 */
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->p = (((ctx->x & 0xFF) == 0x2A) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x46 at 0x005488 */
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    if (ctx->p & 0x02) return 0x0054B4;
+    else return 0x00548C;
     return 0;
 }
 
@@ -1591,6 +3755,48 @@ uint32_t bb_005498(SnesCpuContext* ctx) {
     return 0;
 }
 
+/* SNES Basic Block 0x00549C - 0x0054A2 */
+uint32_t bb_00549C(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x00549C */
+    /* unknown snes opcode 0x00 at 0x00549D */
+    ctx->p = (((ctx->x & 0xFF) == 0x64) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x06 at 0x0054A0 */
+    ctx->p |= 0x08;
+    if (!(ctx->p & 0x02)) return 0x0054D0;
+    else return 0x0054A4;
+    return 0;
+}
+
+/* SNES Basic Block 0x0054A4 - 0x0054AE */
+uint32_t bb_0054A4(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x0054A4 */
+    ctx->p |= 0x08;
+    ctx->p = (((ctx->x & 0xFF) == 0x4A) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x46 at 0x0054A8 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p = (((ctx->y & 0xFF) == 0x68) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x06 at 0x0054AC */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    if (!(ctx->p & 0x02)) return 0x00551A;
+    else return 0x0054B0;
+    return 0;
+}
+
+/* SNES Basic Block 0x0054B0 - 0x0054B6 */
+uint32_t bb_0054B0(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x0054B0 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    ctx->p = (((ctx->x & 0xFF) == 0x6A) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x46 at 0x0054B4 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    if (ctx->p & 0x02) return 0x005520;
+    else return 0x0054B8;
+    return 0;
+}
+
 /* SNES Basic Block 0x0054B4 - 0x0054B6 */
 uint32_t bb_0054B4(SnesCpuContext* ctx) {
     (void)ctx;
@@ -1614,6 +3820,128 @@ uint32_t bb_0054B8(SnesCpuContext* ctx) {
     return 0;
 }
 
+/* SNES Basic Block 0x0054C0 - 0x0054C6 */
+uint32_t bb_0054C0(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x46 at 0x0054C0 */
+    ctx->p &= ~0x01;
+    ctx->p = (((ctx->x & 0xFF) == 0x6C) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x06 at 0x0054C4 */
+    ctx->p &= ~0x01;
+    if (ctx->p & 0x02) return 0x005536;
+    else return 0x0054C8;
+    return 0;
+}
+
+/* SNES Basic Block 0x0054C1 - 0x0054C6 */
+uint32_t bb_0054C1(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p &= ~0x01;
+    ctx->p = (((ctx->x & 0xFF) == 0x6C) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x06 at 0x0054C4 */
+    ctx->p &= ~0x01;
+    if (ctx->p & 0x02) return 0x005536;
+    else return 0x0054C8;
+    return 0;
+}
+
+/* SNES Basic Block 0x0054C7 - 0x0054E6 */
+uint32_t bb_0054C7(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x6E at 0x0054C7 */
+    /* unknown snes opcode 0x06 at 0x0054C8 */
+    /* unknown snes opcode 0xFF at 0x0054C9 */
+    ctx->a = (ctx->a & 0xFF00) | 0x1E;
+    snes_write8(ctx, (ctx->db << 16) | 0x0287, (uint8_t)ctx->a);
+    ctx->p &= ~0x20; /* rep #0x20 */
+    ctx->a = 0x0800;
+    snes_write16(ctx, (ctx->db << 16) | 0x0288, ctx->a);
+    ctx->a = 0x7800;
+    snes_write16(ctx, (ctx->db << 16) | 0x028A, ctx->a);
+    ctx->a = snes_read16(ctx, (ctx->db << 16) | 0x075F);
+    ctx->a &= 0x00FF;
+    ctx->p = ((ctx->a == 0x0007) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    if (!(ctx->p & 0x02)) return 0x0054ED;
+    else return 0x0054E8;
+    return 0;
+}
+
+/* SNES Basic Block 0x0054C8 - 0x0054E6 */
+uint32_t bb_0054C8(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x0054C8 */
+    /* unknown snes opcode 0xFF at 0x0054C9 */
+    ctx->a = (ctx->a & 0xFF00) | 0x1E;
+    snes_write8(ctx, (ctx->db << 16) | 0x0287, (uint8_t)ctx->a);
+    ctx->p &= ~0x20; /* rep #0x20 */
+    ctx->a = 0x0800;
+    snes_write16(ctx, (ctx->db << 16) | 0x0288, ctx->a);
+    ctx->a = 0x7800;
+    snes_write16(ctx, (ctx->db << 16) | 0x028A, ctx->a);
+    ctx->a = snes_read16(ctx, (ctx->db << 16) | 0x075F);
+    ctx->a &= 0x00FF;
+    ctx->p = ((ctx->a == 0x0007) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    if (!(ctx->p & 0x02)) return 0x0054ED;
+    else return 0x0054E8;
+    return 0;
+}
+
+/* SNES Basic Block 0x0054D0 - 0x0054D0 */
+uint32_t bb_0054D0(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x54D2);
+    recomp_snes_call(ctx, 0x0000A9);
+    return 0x0054D3;
+    return 0;
+}
+
+/* SNES Basic Block 0x0054D3 - 0x0054E6 */
+uint32_t bb_0054D3(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
+    snes_write8(ctx, (ctx->db << 16) | 0x0288, (uint8_t)ctx->a);
+    ctx->a = (ctx->a & 0xFF00) | 0x00;
+    ctx->p |= 0x04;
+    snes_write8(ctx, (ctx->db << 16) | 0x028A, (uint8_t)ctx->a);
+    ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->db << 16) | 0x075F);
+    ctx->a = (ctx->a & 0xFF00) | ((ctx->a & 0xFF) & 0xFF);
+    /* unknown snes opcode 0x00 at 0x0054E2 */
+    ctx->p = (((ctx->a & 0xFF) == 0x07) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x00 at 0x0054E5 */
+    if (!(ctx->p & 0x02)) return 0x0054ED;
+    else return 0x0054E8;
+    return 0;
+}
+
+/* SNES Basic Block 0x0054D8 - 0x0054E6 */
+uint32_t bb_0054D8(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x00 at 0x0054D8 */
+    ctx->p |= 0x04;
+    snes_write8(ctx, (ctx->db << 16) | 0x028A, (uint8_t)ctx->a);
+    ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->db << 16) | 0x075F);
+    ctx->a = (ctx->a & 0xFF00) | ((ctx->a & 0xFF) & 0xFF);
+    /* unknown snes opcode 0x00 at 0x0054E2 */
+    ctx->p = (((ctx->a & 0xFF) == 0x07) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x00 at 0x0054E5 */
+    if (!(ctx->p & 0x02)) return 0x0054ED;
+    else return 0x0054E8;
+    return 0;
+}
+
+/* SNES Basic Block 0x0054DD - 0x0054E6 */
+uint32_t bb_0054DD(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->db << 16) | 0x075F);
+    ctx->a = (ctx->a & 0xFF00) | ((ctx->a & 0xFF) & 0xFF);
+    /* unknown snes opcode 0x00 at 0x0054E2 */
+    ctx->p = (((ctx->a & 0xFF) == 0x07) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x00 at 0x0054E5 */
+    if (!(ctx->p & 0x02)) return 0x0054ED;
+    else return 0x0054E8;
+    return 0;
+}
+
 /* SNES Basic Block 0x0054E0 - 0x0054E6 */
 uint32_t bb_0054E0(SnesCpuContext* ctx) {
     (void)ctx;
@@ -1623,6 +3951,70 @@ uint32_t bb_0054E0(SnesCpuContext* ctx) {
     /* unknown snes opcode 0x00 at 0x0054E5 */
     if (!(ctx->p & 0x02)) return 0x0054ED;
     else return 0x0054E8;
+    return 0;
+}
+
+/* SNES Basic Block 0x0054E8 - 0x0054EA */
+uint32_t bb_0054E8(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->a & 0xFF00) | 0x00;
+    if (!(ctx->p & 0x02)) return 0x00546C;
+    else return 0x0054EC;
+    return 0;
+}
+
+/* SNES Basic Block 0x0054EC - 0x005506 */
+uint32_t bb_0054EC(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x03 at 0x0054EC */
+    ctx->a = (ctx->a & 0xFF00) | 0x00;
+    ctx->p = (((ctx->y & 0xFF) == 0x8D) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    snes_write8(ctx, (ctx->dp + 0x02) & 0xFFFF, (uint8_t)ctx->a);
+    ctx->p |= 0x20; /* sep #0x20 */
+    snes_write8(ctx, (ctx->db << 16) | 0x0F7D, 0);
+    snes_write8(ctx, (ctx->db << 16) | 0x0F7E, 0);
+    snes_write8(ctx, (ctx->db << 16) | 0x0F7F, 0);
+    snes_write8(ctx, (ctx->db << 16) | 0x0B9C, 0);
+    ctx->a = (ctx->a & 0xFF00) | 0x02;
+    snes_write8(ctx, (ctx->db << 16) | 0x0B76, (uint8_t)ctx->a);
+    { uint16_t ret_off = snes_read16(ctx, 0x000000 | ctx->sp + 1); uint8_t ret_bank = snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 3; return ((ret_bank << 16) | ret_off) + 1; } /* rtl */
+    return 0;
+}
+
+/* SNES Basic Block 0x0054ED - 0x005506 */
+uint32_t bb_0054ED(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->a & 0xFF00) | 0x00;
+    ctx->p = (((ctx->y & 0xFF) == 0x8D) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    snes_write8(ctx, (ctx->dp + 0x02) & 0xFFFF, (uint8_t)ctx->a);
+    ctx->p |= 0x20; /* sep #0x20 */
+    snes_write8(ctx, (ctx->db << 16) | 0x0F7D, 0);
+    snes_write8(ctx, (ctx->db << 16) | 0x0F7E, 0);
+    snes_write8(ctx, (ctx->db << 16) | 0x0F7F, 0);
+    snes_write8(ctx, (ctx->db << 16) | 0x0B9C, 0);
+    ctx->a = (ctx->a & 0xFF00) | 0x02;
+    snes_write8(ctx, (ctx->db << 16) | 0x0B76, (uint8_t)ctx->a);
+    { uint16_t ret_off = snes_read16(ctx, 0x000000 | ctx->sp + 1); uint8_t ret_bank = snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 3; return ((ret_bank << 16) | ret_off) + 1; } /* rtl */
+    return 0;
+}
+
+/* SNES Basic Block 0x00551A - 0x00552D */
+uint32_t bb_00551A(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x02 at 0x00551A */
+    ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->db << 16) | 0x075F);
+    ctx->a = (ctx->a & 0xFF00) | ((ctx->a & 0xFF) & 0xFF);
+    /* unknown snes opcode 0x00 at 0x005520 */
+    ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (((ctx->a & 0xFF) << 1) & 0xFF)) : ((ctx->a << 1) & 0xFFFF);
+    ctx->x = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
+    /* unknown snes opcode 0xBF at 0x005523 */
+    ctx->sp -= (ctx->p & 0x10) ? 1 : 2; if (ctx->p & 0x10) snes_write8(ctx, 0x000000 | ctx->sp, (uint8_t)ctx->y); else snes_write16(ctx, 0x000000 | ctx->sp, ctx->y);
+    /* unknown snes opcode 0xD5 at 0x005525 */
+    /* unknown snes opcode 0x00 at 0x005526 */
+    snes_write8(ctx, (ctx->db << 16) | 0x0285, (uint8_t)ctx->a);
+    ctx->p |= 0x20; /* sep #0x20 */
+    if (ctx->p & 0x10) { ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->x = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }
+    { uint16_t ret_off = snes_read16(ctx, 0x000000 | ctx->sp + 1); uint8_t ret_bank = snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 3; return ((ret_bank << 16) | ret_off) + 1; } /* rtl */
     return 0;
 }
 
@@ -1640,6 +4032,22 @@ uint32_t bb_005520(SnesCpuContext* ctx) {
     ctx->p |= 0x20; /* sep #0x20 */
     if (ctx->p & 0x10) { ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->x = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }
     { uint16_t ret_off = snes_read16(ctx, 0x000000 | ctx->sp + 1); uint8_t ret_bank = snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 3; return ((ret_bank << 16) | ret_off) + 1; } /* rtl */
+    return 0;
+}
+
+/* SNES Basic Block 0x00552C - 0x00552D */
+uint32_t bb_00552C(SnesCpuContext* ctx) {
+    (void)ctx;
+    if (ctx->p & 0x10) { ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->x = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }
+    { uint16_t ret_off = snes_read16(ctx, 0x000000 | ctx->sp + 1); uint8_t ret_bank = snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 3; return ((ret_bank << 16) | ret_off) + 1; } /* rtl */
+    return 0;
+}
+
+/* SNES Basic Block 0x005536 - 0x005537 */
+uint32_t bb_005536(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x00 at 0x005536 */
+    { uint16_t ret = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; return ((ctx->pb << 16) | ret) + 1; } /* rts */
     return 0;
 }
 
@@ -1782,6 +4190,7 @@ uint32_t bb_00803B(SnesCpuContext* ctx) {
     (void)ctx;
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x803D);
     recomp_snes_call(ctx, 0x0083F8);
+    return 0x00803E;
     return 0;
 }
 
@@ -1802,6 +4211,7 @@ uint32_t bb_00803E(SnesCpuContext* ctx) {
     snes_write8(ctx, (ctx->db << 16) | 0x001C, (uint8_t)ctx->a);
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8062);
     recomp_snes_call(ctx, 0x008C6E);
+    return 0x008063;
     return 0;
 }
 
@@ -1821,6 +4231,7 @@ uint32_t bb_008040(SnesCpuContext* ctx) {
     snes_write8(ctx, (ctx->db << 16) | 0x001C, (uint8_t)ctx->a);
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8062);
     recomp_snes_call(ctx, 0x008C6E);
+    return 0x008063;
     return 0;
 }
 
@@ -1882,6 +4293,7 @@ uint32_t bb_008082(SnesCpuContext* ctx) {
     (void)ctx;
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8084);
     recomp_snes_call(ctx, 0x008712);
+    return 0x008085;
     return 0;
 }
 
@@ -1891,8 +4303,8 @@ uint32_t bb_008085(SnesCpuContext* ctx) {
     ctx->p &= ~0x04;
     /* unknown snes opcode 0xE6 at 0x008086 */
     /* unknown snes opcode 0xFD at 0x008087 */
-    /* unknown snes opcode 0xA6 at 0x008088 */
-    ctx->p = (((ctx->x & 0xFF) == 0xBD) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, (ctx->dp + 0xE0) & 0xFFFF);
+    /* unknown snes opcode 0xBD at 0x00808A */
     /* unknown snes opcode 0x83 at 0x00808B */
     ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) - 1) & 0xFF) : ((ctx->y - 1) & 0xFFFF);
     if (ctx->p & 0x02) return 0x008092;
@@ -1905,6 +4317,7 @@ uint32_t bb_00808F(SnesCpuContext* ctx) {
     (void)ctx;
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8091);
     recomp_snes_call(ctx, 0x00875F);
+    return 0x008092;
     return 0;
 }
 
@@ -1915,14 +4328,15 @@ uint32_t bb_008092(SnesCpuContext* ctx) {
     snes_write8(ctx, 0x000000 | ctx->sp, ctx->pb);
     snes_write16(ctx, 0x000000 | ctx->sp + 1, 0x8095);
     recomp_snes_call(ctx, 0x0080C7);
+    return 0x008096;
     return 0;
 }
 
 /* SNES Basic Block 0x008096 - 0x00809B */
 uint32_t bb_008096(SnesCpuContext* ctx) {
     (void)ctx;
-    /* unknown snes opcode 0xA6 at 0x008096 */
-    ctx->p = (((ctx->x & 0xFF) == 0xBD) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, (ctx->dp + 0xE0) & 0xFFFF);
+    /* unknown snes opcode 0xBD at 0x008098 */
     /* unknown snes opcode 0x83 at 0x008099 */
     ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) - 1) & 0xFF) : ((ctx->y - 1) & 0xFFFF);
     if (ctx->p & 0x02) return 0x0080A0;
@@ -1935,6 +4349,7 @@ uint32_t bb_00809D(SnesCpuContext* ctx) {
     (void)ctx;
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x809F);
     recomp_snes_call(ctx, 0x0087B9);
+    return 0x0080A0;
     return 0;
 }
 
@@ -1946,19 +4361,13 @@ uint32_t bb_0080A0(SnesCpuContext* ctx) {
     return 0;
 }
 
-/* SNES Basic Block 0x0080C7 - 0x0080CB */
+/* SNES Basic Block 0x0080C7 - 0x0080D1 */
 uint32_t bb_0080C7(SnesCpuContext* ctx) {
     (void)ctx;
-    /* unknown snes opcode 0xA6 at 0x0080C7 */
-    ctx->p = (((ctx->x & 0xFF) == 0xBF) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
-    /* unknown snes opcode 0xA6 at 0x0080CA */
-    return 0x0080CD;
-    return 0;
-}
-
-/* SNES Basic Block 0x0080CD - 0x0080D1 */
-uint32_t bb_0080CD(SnesCpuContext* ctx) {
-    (void)ctx;
+    ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, (ctx->dp + 0xE0) & 0xFFFF);
+    /* unknown snes opcode 0xBF at 0x0080C9 */
+    ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, (ctx->dp + 0x80) & 0xFFFF);
+    /* unknown snes opcode 0x00 at 0x0080CC */
     snes_write8(ctx, (ctx->dp + 0x03) & 0xFFFF, (uint8_t)ctx->a);
     /* unknown snes opcode 0xBF at 0x0080CF */
     /* unknown snes opcode 0xB1 at 0x0080D0 */
@@ -1966,19 +4375,12 @@ uint32_t bb_0080CD(SnesCpuContext* ctx) {
     return 0;
 }
 
-/* SNES Basic Block 0x0080D3 - 0x0080D7 */
+/* SNES Basic Block 0x0080D3 - 0x0080DE */
 uint32_t bb_0080D3(SnesCpuContext* ctx) {
     (void)ctx;
     snes_write8(ctx, (ctx->dp + 0x04) & 0xFFFF, (uint8_t)ctx->a);
     /* unknown snes opcode 0xBF at 0x0080D5 */
-    /* unknown snes opcode 0xBC at 0x0080D6 */
-    return 0x0080D9;
-    return 0;
-}
-
-/* SNES Basic Block 0x0080D9 - 0x0080DE */
-uint32_t bb_0080D9(SnesCpuContext* ctx) {
-    (void)ctx;
+    ctx->y = (ctx->y & 0xFF00) | snes_read8(ctx, (ctx->db << 16) | ((0x0080 + ctx->x) & 0xFFFF));
     snes_write8(ctx, (ctx->dp + 0x05) & 0xFFFF, (uint8_t)ctx->a);
     /* unknown snes opcode 0xDC at 0x0080DB */
     /* unknown snes opcode 0x03 at 0x0080DC */
@@ -1987,6 +4389,7 @@ uint32_t bb_0080D9(SnesCpuContext* ctx) {
     snes_write8(ctx, 0x000000 | ctx->sp, ctx->pb);
     snes_write16(ctx, 0x000000 | ctx->sp + 1, 0x80E1);
     recomp_snes_call(ctx, 0x008874);
+    return 0x0080E2;
     return 0;
 }
 
@@ -2016,6 +4419,7 @@ uint32_t bb_0080E2(SnesCpuContext* ctx) {
     snes_write8(ctx, (ctx->db << 16) | 0x2141, (uint8_t)ctx->a);
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8113);
     recomp_snes_call(ctx, 0x0083F8);
+    return 0x008114;
     return 0;
 }
 
@@ -2044,6 +4448,7 @@ uint32_t bb_0083F8(SnesCpuContext* ctx) {
     (void)ctx;
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x83FA);
     recomp_snes_call(ctx, 0x008A8F);
+    return 0x0083FB;
     return 0;
 }
 
@@ -2059,6 +4464,7 @@ uint32_t bb_0083FB(SnesCpuContext* ctx) {
     snes_write8(ctx, 0x000000 | ctx->sp, ctx->pb);
     snes_write16(ctx, 0x000000 | ctx->sp + 1, 0x8409);
     recomp_snes_call(ctx, 0x0086D4);
+    return 0x00840A;
     return 0;
 }
 
@@ -2073,6 +4479,7 @@ uint32_t bb_00840A(SnesCpuContext* ctx) {
     snes_write8(ctx, 0x000000 | ctx->sp, ctx->pb);
     snes_write16(ctx, 0x000000 | ctx->sp + 1, 0x8416);
     recomp_snes_call(ctx, 0x0086D4);
+    return 0x008417;
     return 0;
 }
 
@@ -2087,6 +4494,7 @@ uint32_t bb_008417(SnesCpuContext* ctx) {
     snes_write8(ctx, 0x000000 | ctx->sp, ctx->pb);
     snes_write16(ctx, 0x000000 | ctx->sp + 1, 0x8424);
     recomp_snes_call(ctx, 0x0086D4);
+    return 0x008425;
     return 0;
 }
 
@@ -2101,6 +4509,7 @@ uint32_t bb_008425(SnesCpuContext* ctx) {
     snes_write8(ctx, 0x000000 | ctx->sp, ctx->pb);
     snes_write16(ctx, 0x000000 | ctx->sp + 1, 0x8432);
     recomp_snes_call(ctx, 0x0086D4);
+    return 0x008433;
     return 0;
 }
 
@@ -2117,6 +4526,7 @@ uint32_t bb_008433(SnesCpuContext* ctx) {
     snes_write8(ctx, 0x000000 | ctx->sp, ctx->pb);
     snes_write16(ctx, 0x000000 | ctx->sp + 1, 0x8446);
     recomp_snes_call(ctx, 0x0084E0);
+    return 0x008447;
     return 0;
 }
 
@@ -2132,6 +4542,7 @@ uint32_t bb_008447(SnesCpuContext* ctx) {
     snes_write8(ctx, (ctx->db << 16) | 0x2133, (uint8_t)ctx->a);
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8455);
     recomp_snes_call(ctx, 0x00845E);
+    return 0x008456;
     return 0;
 }
 
@@ -2151,8 +4562,7 @@ uint32_t bb_00845E(SnesCpuContext* ctx) {
     ctx->p &= ~0x10; /* rep #0x10 */
     ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->dp + 0x01) & 0xFFFF);
     snes_write8(ctx, (ctx->db << 16) | 0x2101, (uint8_t)ctx->a);
-    /* unknown snes opcode 0xA6 at 0x008465 */
-    /* unknown snes opcode 0x04 at 0x008466 */
+    ctx->x = snes_read16(ctx, (ctx->dp + 0x04) & 0xFFFF);
     snes_write16(ctx, (ctx->db << 16) | 0x2107, ctx->x);
     ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->dp + 0x06) & 0xFFFF);
     snes_write8(ctx, (ctx->db << 16) | 0x2109, (uint8_t)ctx->a);
@@ -2188,22 +4598,17 @@ uint32_t bb_00845E(SnesCpuContext* ctx) {
     snes_write8(ctx, (ctx->db << 16) | 0x2132, (uint8_t)ctx->a);
     ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->dp + 0x1F) & 0xFFFF);
     snes_write8(ctx, (ctx->db << 16) | 0x2132, (uint8_t)ctx->a);
-    /* unknown snes opcode 0xA6 at 0x0084BF */
-    /* unknown snes opcode 0x17 at 0x0084C0 */
+    ctx->x = snes_read16(ctx, (ctx->dp + 0x17) & 0xFFFF);
     snes_write16(ctx, (ctx->db << 16) | 0x212C, ctx->x);
-    /* unknown snes opcode 0xA6 at 0x0084C4 */
-    /* unknown snes opcode 0x19 at 0x0084C5 */
+    ctx->x = snes_read16(ctx, (ctx->dp + 0x19) & 0xFFFF);
     snes_write16(ctx, (ctx->db << 16) | 0x212E, ctx->x);
-    /* unknown snes opcode 0xA6 at 0x0084C9 */
-    /* unknown snes opcode 0x14 at 0x0084CA */
+    ctx->x = snes_read16(ctx, (ctx->dp + 0x14) & 0xFFFF);
     snes_write16(ctx, (ctx->db << 16) | 0x2123, ctx->x);
     ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->dp + 0x16) & 0xFFFF);
     snes_write8(ctx, (ctx->db << 16) | 0x2125, (uint8_t)ctx->a);
-    /* unknown snes opcode 0xA6 at 0x0084D3 */
-    ctx->sp = ctx->a;
+    ctx->x = snes_read16(ctx, (ctx->dp + 0x1B) & 0xFFFF);
     snes_write16(ctx, (ctx->db << 16) | 0x2130, ctx->x);
-    /* unknown snes opcode 0xA6 at 0x0084D8 */
-    /* unknown snes opcode 0x02 at 0x0084D9 */
+    ctx->x = snes_read16(ctx, (ctx->dp + 0x02) & 0xFFFF);
     snes_write16(ctx, (ctx->db << 16) | 0x2105, ctx->x);
     ctx->p |= 0x10; /* sep #0x10 */
     { uint16_t ret = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; return ((ctx->pb << 16) | ret) + 1; } /* rts */
@@ -2217,6 +4622,7 @@ uint32_t bb_0084E0(SnesCpuContext* ctx) {
     snes_write8(ctx, 0x000000 | ctx->sp, ctx->pb);
     snes_write16(ctx, 0x000000 | ctx->sp + 1, 0x84E3);
     recomp_snes_call(ctx, 0x008874);
+    return 0x0084E4;
     return 0;
 }
 
@@ -2327,6 +4733,7 @@ uint32_t bb_0084EE(SnesCpuContext* ctx) {
     ctx->dp = (uint8_t)(ctx->a & 0xFF);
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x857B);
     recomp_snes_call(ctx, 0x0085AB);
+    return 0x00857C;
     return 0;
 }
 
@@ -2398,6 +4805,7 @@ uint32_t bb_00851B(SnesCpuContext* ctx) {
     ctx->dp = (uint8_t)(ctx->a & 0xFF);
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x857B);
     recomp_snes_call(ctx, 0x0085AB);
+    return 0x00857C;
     return 0;
 }
 
@@ -2406,6 +4814,7 @@ uint32_t bb_008579(SnesCpuContext* ctx) {
     (void)ctx;
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x857B);
     recomp_snes_call(ctx, 0x0085AB);
+    return 0x00857C;
     return 0;
 }
 
@@ -2423,14 +4832,14 @@ uint32_t bb_00857C(SnesCpuContext* ctx) {
     /* unknown snes opcode 0x05 at 0x008589 */
     ctx->p = ((ctx->a & 0x3CA0) == 0) ? (ctx->p | 0x02) : (ctx->p & ~0x02);
     snes_write16(ctx, (ctx->dp + 0x02) & 0xFFFF, ctx->a);
-    /* unknown snes opcode 0x84 at 0x00858F */
-    /* unknown snes opcode 0x04 at 0x008590 */
+    snes_write8(ctx, (ctx->dp + 0x04) & 0xFFFF, (uint8_t)ctx->y);
     ctx->a = 0x9200;
     ctx->y = (ctx->y & 0xFF00) | 0x7F;
     ctx->sp -= 3;
     snes_write8(ctx, 0x000000 | ctx->sp, ctx->pb);
     snes_write16(ctx, 0x000000 | ctx->sp + 1, 0x8599);
     recomp_snes_call(ctx, 0x0086B3);
+    return 0x00859A;
     return 0;
 }
 
@@ -2469,11 +4878,11 @@ uint32_t bb_0085D4(SnesCpuContext* ctx) {
     ctx->p = (((ctx->y & 0xFF) == 0x85) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
     /* unknown snes opcode 0x02 at 0x0085DB */
     ctx->x = (ctx->x & 0xFF00) | 0x3D;
-    /* unknown snes opcode 0x86 at 0x0085DE */
-    /* unknown snes opcode 0x04 at 0x0085DF */
+    snes_write8(ctx, (ctx->dp + 0x04) & 0xFFFF, (uint8_t)ctx->x);
     ctx->a = (ctx->a & 0xFF00) | 0x00;
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x85E4);
     recomp_snes_call(ctx, 0x000585);
+    return 0x0085E5;
     return 0;
 }
 
@@ -2495,8 +4904,7 @@ uint32_t bb_0085EC(SnesCpuContext* ctx) {
     ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
     snes_write8(ctx, (ctx->dp + 0x02) & 0xFFFF, (uint8_t)ctx->a);
     ctx->x = (ctx->x & 0xFF00) | 0x07;
-    /* unknown snes opcode 0x86 at 0x0085F5 */
-    /* unknown snes opcode 0x04 at 0x0085F6 */
+    snes_write8(ctx, (ctx->dp + 0x04) & 0xFFFF, (uint8_t)ctx->x);
     ctx->a = (ctx->a & 0xFF00) | 0x00;
     ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
     snes_write8(ctx, (ctx->dp + 0x05) & 0xFFFF, (uint8_t)ctx->a);
@@ -2524,8 +4932,7 @@ uint32_t bb_0086B3(SnesCpuContext* ctx) {
     snes_write16(ctx, (ctx->db << 16) | 0x4300, ctx->a);
     ctx->a = snes_read16(ctx, (ctx->dp + 0x02) & 0xFFFF);
     snes_write16(ctx, (ctx->db << 16) | 0x4302, ctx->a);
-    /* unknown snes opcode 0xA4 at 0x0086C4 */
-    /* unknown snes opcode 0x04 at 0x0086C5 */
+    ctx->y = (ctx->y & 0xFF00) | snes_read8(ctx, (ctx->dp + 0x04) & 0xFFFF);
     snes_write8(ctx, (ctx->db << 16) | 0x4304, (uint8_t)ctx->y);
     ctx->a = snes_read16(ctx, (ctx->dp + 0x00) & 0xFFFF);
     snes_write16(ctx, (ctx->db << 16) | 0x4305, ctx->a);
@@ -2556,8 +4963,7 @@ uint32_t bb_0086D4(SnesCpuContext* ctx) {
     snes_write8(ctx, (ctx->db << 16) | 0x211B, (uint8_t)ctx->y);
     ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) - 1) & 0xFF) : ((ctx->y - 1) & 0xFFFF);
     snes_write8(ctx, (ctx->db << 16) | 0x211B, (uint8_t)ctx->y);
-    /* unknown snes opcode 0xA4 at 0x0086F0 */
-    /* unknown snes opcode 0x02 at 0x0086F1 */
+    ctx->y = (ctx->y & 0xFF00) | snes_read8(ctx, (ctx->dp + 0x02) & 0xFFFF);
     snes_write8(ctx, (ctx->db << 16) | 0x211C, (uint8_t)ctx->y);
     ctx->y = (ctx->y & 0xFF00) | 0x01;
     snes_write8(ctx, (ctx->db << 16) | 0x420B, (uint8_t)ctx->y);
@@ -2578,8 +4984,7 @@ uint32_t bb_0086D6(SnesCpuContext* ctx) {
     snes_write8(ctx, (ctx->db << 16) | 0x211B, (uint8_t)ctx->y);
     ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) - 1) & 0xFF) : ((ctx->y - 1) & 0xFFFF);
     snes_write8(ctx, (ctx->db << 16) | 0x211B, (uint8_t)ctx->y);
-    /* unknown snes opcode 0xA4 at 0x0086F0 */
-    /* unknown snes opcode 0x02 at 0x0086F1 */
+    ctx->y = (ctx->y & 0xFF00) | snes_read8(ctx, (ctx->dp + 0x02) & 0xFFFF);
     snes_write8(ctx, (ctx->db << 16) | 0x211C, (uint8_t)ctx->y);
     ctx->y = (ctx->y & 0xFF00) | 0x01;
     snes_write8(ctx, (ctx->db << 16) | 0x420B, (uint8_t)ctx->y);
@@ -2611,8 +5016,7 @@ uint32_t bb_008712(SnesCpuContext* ctx) {
     /* unknown snes opcode 0x25 at 0x008726 */
     /* unknown snes opcode 0xF2 at 0x008727 */
     snes_write8(ctx, (ctx->dp + 0xF6) & 0xFFFF, (uint8_t)ctx->a);
-    /* unknown snes opcode 0x84 at 0x00872A */
-    if (ctx->p & 0x10) { ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->x = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }
+    snes_write8(ctx, (ctx->dp + 0xFA) & 0xFFFF, (uint8_t)ctx->y);
     ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->dp + 0x01) & 0xFFFF);
     snes_write8(ctx, (ctx->dp + 0xF0) & 0xFFFF, (uint8_t)ctx->a);
     ctx->y = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
@@ -2641,8 +5045,7 @@ uint32_t bb_008736(SnesCpuContext* ctx) {
     /* unknown snes opcode 0x25 at 0x00874B */
     /* unknown snes opcode 0xF3 at 0x00874C */
     snes_write8(ctx, (ctx->dp + 0xF7) & 0xFFFF, (uint8_t)ctx->a);
-    /* unknown snes opcode 0x84 at 0x00874F */
-    /* xce: exchange carry with emulation flag */
+    snes_write8(ctx, (ctx->dp + 0xFB) & 0xFFFF, (uint8_t)ctx->y);
     ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->dp + 0x01) & 0xFFFF);
     snes_write8(ctx, (ctx->dp + 0xF1) & 0xFFFF, (uint8_t)ctx->a);
     ctx->y = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
@@ -2651,8 +5054,7 @@ uint32_t bb_008736(SnesCpuContext* ctx) {
     /* unknown snes opcode 0x25 at 0x008758 */
     /* unknown snes opcode 0xF1 at 0x008759 */
     snes_write8(ctx, (ctx->dp + 0xF5) & 0xFFFF, (uint8_t)ctx->a);
-    /* unknown snes opcode 0x84 at 0x00875C */
-    /* unknown snes opcode 0xF9 at 0x00875D */
+    snes_write8(ctx, (ctx->dp + 0xF9) & 0xFFFF, (uint8_t)ctx->y);
     { uint16_t ret = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; return ((ctx->pb << 16) | ret) + 1; } /* rts */
     return 0;
 }
@@ -2692,6 +5094,7 @@ uint32_t bb_008778(SnesCpuContext* ctx) {
     /* unknown snes opcode 0x95 at 0x00877D */
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8780);
     recomp_snes_call(ctx, 0x002495);
+    return 0x008781;
     return 0;
 }
 
@@ -2741,6 +5144,7 @@ uint32_t bb_0087B9(SnesCpuContext* ctx) {
     snes_write8(ctx, 0x000000 | ctx->sp, ctx->pb);
     snes_write16(ctx, 0x000000 | ctx->sp + 1, 0x87CE);
     recomp_snes_call(ctx, 0x150A0A);
+    return 0x0087CF;
     return 0;
 }
 
@@ -2760,6 +5164,7 @@ uint32_t bb_0087C2(SnesCpuContext* ctx) {
     snes_write8(ctx, 0x000000 | ctx->sp, ctx->pb);
     snes_write16(ctx, 0x000000 | ctx->sp + 1, 0x87CE);
     recomp_snes_call(ctx, 0x150A0A);
+    return 0x0087CF;
     return 0;
 }
 
@@ -2772,6 +5177,7 @@ uint32_t bb_0087CF(SnesCpuContext* ctx) {
     /* unknown snes opcode 0x15 at 0x0087D2 */
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x87D5);
     recomp_snes_call(ctx, 0x000099);
+    return 0x0087D6;
     return 0;
 }
 
@@ -2863,14 +5269,14 @@ uint32_t bb_008A8F(SnesCpuContext* ctx) {
     ctx->a = 0xFC00;
     snes_write16(ctx, (ctx->dp + 0x02) & 0xFFFF, ctx->a);
     ctx->y = (ctx->y & 0xFF00) | 0x07;
-    /* unknown snes opcode 0x84 at 0x008A9D */
-    /* unknown snes opcode 0x04 at 0x008A9E */
+    snes_write8(ctx, (ctx->dp + 0x04) & 0xFFFF, (uint8_t)ctx->y);
     ctx->a = 0x0000;
     ctx->y = (ctx->y & 0xFF00) | 0x7F;
     ctx->sp -= 3;
     snes_write8(ctx, 0x000000 | ctx->sp, ctx->pb);
     snes_write16(ctx, 0x000000 | ctx->sp + 1, 0x8AA7);
     recomp_snes_call(ctx, 0x0086B3);
+    return 0x008AA8;
     return 0;
 }
 
@@ -2882,14 +5288,14 @@ uint32_t bb_008AA8(SnesCpuContext* ctx) {
     ctx->a = 0x8000;
     snes_write16(ctx, (ctx->dp + 0x02) & 0xFFFF, ctx->a);
     ctx->y = (ctx->y & 0xFF00) | 0x3B;
-    /* unknown snes opcode 0x84 at 0x008AB4 */
-    /* unknown snes opcode 0x04 at 0x008AB5 */
+    snes_write8(ctx, (ctx->dp + 0x04) & 0xFFFF, (uint8_t)ctx->y);
     ctx->a = 0x0400;
     ctx->y = (ctx->y & 0xFF00) | 0x7F;
     ctx->sp -= 3;
     snes_write8(ctx, 0x000000 | ctx->sp, ctx->pb);
     snes_write16(ctx, 0x000000 | ctx->sp + 1, 0x8ABE);
     recomp_snes_call(ctx, 0x0086B3);
+    return 0x008ABF;
     return 0;
 }
 
@@ -3174,6 +5580,7 @@ uint32_t bb_008C8A(SnesCpuContext* ctx) {
     snes_write8(ctx, 0x000000 | ctx->sp, ctx->pb);
     snes_write16(ctx, 0x000000 | ctx->sp + 1, 0x8C99);
     recomp_snes_call(ctx, 0x0086D4);
+    return 0x008C9A;
     return 0;
 }
 
@@ -3184,6 +5591,7 @@ uint32_t bb_008C9A(SnesCpuContext* ctx) {
     ctx->x = 0x0000;
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8CA1);
     recomp_snes_call(ctx, 0x008D43);
+    return 0x008CA2;
     return 0;
 }
 
@@ -3192,6 +5600,7 @@ uint32_t bb_008C9F(SnesCpuContext* ctx) {
     (void)ctx;
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8CA1);
     recomp_snes_call(ctx, 0x008D43);
+    return 0x008CA2;
     return 0;
 }
 
@@ -3232,8 +5641,7 @@ uint32_t bb_008CC1(SnesCpuContext* ctx) {
     snes_write16(ctx, (ctx->db << 16) | 0x3A3A, ctx->a);
     ctx->y = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
     snes_write16(ctx, (ctx->dp + 0x00) & 0xFFFF, 0);
-    /* unknown snes opcode 0x86 at 0x008CD6 */
-    /* unknown snes opcode 0x02 at 0x008CD7 */
+    snes_write16(ctx, (ctx->dp + 0x02) & 0xFFFF, ctx->x);
     ctx->p |= 0x20; /* sep #0x20 */
     /* unknown snes opcode 0xBF at 0x008CDA */
     if (!(ctx->p & 0x80)) return 0x008CDD;
@@ -3261,8 +5669,7 @@ uint32_t bb_008CC9(SnesCpuContext* ctx) {
     snes_write8(ctx, (ctx->db << 16) | 0x3A3A, (uint8_t)ctx->a);
     ctx->y = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
     snes_write8(ctx, (ctx->dp + 0x00) & 0xFFFF, 0);
-    /* unknown snes opcode 0x86 at 0x008CD6 */
-    /* unknown snes opcode 0x02 at 0x008CD7 */
+    snes_write16(ctx, (ctx->dp + 0x02) & 0xFFFF, ctx->x);
     ctx->p |= 0x20; /* sep #0x20 */
     /* unknown snes opcode 0xBF at 0x008CDA */
     if (!(ctx->p & 0x80)) return 0x008CDD;
@@ -3370,26 +5777,26 @@ uint32_t bb_008D14(SnesCpuContext* ctx) {
     ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, (uint8_t)ctx->a);
     ctx->db = snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1;
     ctx->x = (ctx->x & 0xFF00) | 0x00;
-    /* unknown snes opcode 0x86 at 0x008D23 */
-    /* unknown snes opcode 0x00 at 0x008D24 */
+    snes_write8(ctx, (ctx->dp + 0x00) & 0xFFFF, (uint8_t)ctx->x);
     ctx->sp -= (ctx->p & 0x10) ? 1 : 2; if (ctx->p & 0x10) snes_write8(ctx, 0x000000 | ctx->sp, (uint8_t)ctx->x); else snes_write16(ctx, 0x000000 | ctx->sp, ctx->x);
     ctx->sp -= 3;
     snes_write8(ctx, 0x000000 | ctx->sp, ctx->pb);
     snes_write16(ctx, 0x000000 | ctx->sp + 1, 0x8D29);
     recomp_snes_call(ctx, 0x309E5B);
+    return 0x008D2A;
     return 0;
 }
 
 /* SNES Basic Block 0x008D23 - 0x008D26 */
 uint32_t bb_008D23(SnesCpuContext* ctx) {
     (void)ctx;
-    /* unknown snes opcode 0x86 at 0x008D23 */
-    /* unknown snes opcode 0x00 at 0x008D24 */
+    snes_write8(ctx, (ctx->dp + 0x00) & 0xFFFF, (uint8_t)ctx->x);
     ctx->sp -= (ctx->p & 0x10) ? 1 : 2; if (ctx->p & 0x10) snes_write8(ctx, 0x000000 | ctx->sp, (uint8_t)ctx->x); else snes_write16(ctx, 0x000000 | ctx->sp, ctx->x);
     ctx->sp -= 3;
     snes_write8(ctx, 0x000000 | ctx->sp, ctx->pb);
     snes_write16(ctx, 0x000000 | ctx->sp + 1, 0x8D29);
     recomp_snes_call(ctx, 0x309E5B);
+    return 0x008D2A;
     return 0;
 }
 
@@ -3408,6 +5815,7 @@ uint32_t bb_008D2C(SnesCpuContext* ctx) {
     snes_write8(ctx, 0x000000 | ctx->sp, ctx->pb);
     snes_write16(ctx, 0x000000 | ctx->sp + 1, 0x8D2F);
     recomp_snes_call(ctx, 0x00B6B8);
+    return 0x008D30;
     return 0;
 }
 
@@ -3525,6 +5933,7 @@ uint32_t bb_008D7B(SnesCpuContext* ctx) {
     (void)ctx;
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8D7D);
     recomp_snes_call(ctx, 0x0000A9);
+    return 0x008D7E;
     return 0;
 }
 
@@ -3886,6 +6295,48 @@ uint32_t bb_008DD1(SnesCpuContext* ctx) {
     return 0;
 }
 
+/* SNES Basic Block 0x008EA7 - 0x008ECC */
+uint32_t bb_008EA7(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x00 at 0x008EA7 */
+    /* unknown snes opcode 0x00 at 0x008EA8 */
+    /* unknown snes opcode 0x00 at 0x008EA9 */
+    /* unknown snes opcode 0x00 at 0x008EAA */
+    /* unknown snes opcode 0x00 at 0x008EAB */
+    /* unknown snes opcode 0x00 at 0x008EAC */
+    /* unknown snes opcode 0x00 at 0x008EAD */
+    /* unknown snes opcode 0x00 at 0x008EAE */
+    /* unknown snes opcode 0x00 at 0x008EAF */
+    /* unknown snes opcode 0x00 at 0x008EB0 */
+    /* unknown snes opcode 0x00 at 0x008EB1 */
+    /* unknown snes opcode 0x00 at 0x008EB2 */
+    /* unknown snes opcode 0x00 at 0x008EB3 */
+    /* unknown snes opcode 0x00 at 0x008EB4 */
+    /* unknown snes opcode 0x00 at 0x008EB5 */
+    /* unknown snes opcode 0x00 at 0x008EB6 */
+    /* unknown snes opcode 0x00 at 0x008EB7 */
+    /* unknown snes opcode 0x00 at 0x008EB8 */
+    /* unknown snes opcode 0x00 at 0x008EB9 */
+    /* unknown snes opcode 0x00 at 0x008EBA */
+    /* unknown snes opcode 0x00 at 0x008EBB */
+    /* unknown snes opcode 0x00 at 0x008EBC */
+    /* unknown snes opcode 0x00 at 0x008EBD */
+    /* unknown snes opcode 0x00 at 0x008EBE */
+    /* unknown snes opcode 0x00 at 0x008EBF */
+    /* unknown snes opcode 0xFF at 0x008EC0 */
+    /* unknown snes opcode 0x00 at 0x008EC1 */
+    /* unknown snes opcode 0x00 at 0x008EC2 */
+    ctx->sp -= (ctx->p & 0x10) ? 1 : 2; if (ctx->p & 0x10) snes_write8(ctx, 0x000000 | ctx->sp, (uint8_t)ctx->x); else snes_write16(ctx, 0x000000 | ctx->sp, ctx->x);
+    ctx->sp -= (ctx->p & 0x10) ? 1 : 2; if (ctx->p & 0x10) snes_write8(ctx, 0x000000 | ctx->sp, (uint8_t)ctx->y); else snes_write16(ctx, 0x000000 | ctx->sp, ctx->y);
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->db);
+    /* unknown snes opcode 0x4B at 0x008EC6 */
+    ctx->db = snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1;
+    ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, 0x701FF8);
+    if (ctx->p & 0x02) return 0x008ED1;
+    else return 0x008ECE;
+    return 0;
+}
+
 /* SNES Basic Block 0x008ECE - 0x008ECE */
 uint32_t bb_008ECE(SnesCpuContext* ctx) {
     (void)ctx;
@@ -3917,6 +6368,51 @@ uint32_t bb_008EE1(SnesCpuContext* ctx) {
     return 0;
 }
 
+/* SNES Basic Block 0x008EE6 - 0x008EE7 */
+uint32_t bb_008EE6(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x07 at 0x008EE6 */
+    if (ctx->p & 0x02) return 0x008EF0;
+    else return 0x008EE9;
+    return 0;
+}
+
+/* SNES Basic Block 0x008EE9 - 0x008EEB */
+uint32_t bb_008EE9(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p = (((ctx->a & 0xFF) == 0x01) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    if (ctx->p & 0x02) return 0x008EF8;
+    else return 0x008EED;
+    return 0;
+}
+
+/* SNES Basic Block 0x008EED - 0x008EED */
+uint32_t bb_008EED(SnesCpuContext* ctx) {
+    (void)ctx;
+    return 0x008F37; /* jmp 0x008F37 */
+    return 0;
+}
+
+/* SNES Basic Block 0x008EF0 - 0x008EF6 */
+uint32_t bb_008EF0(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->db << 16) | 0x075F);
+    ctx->p = (((ctx->a & 0xFF) == snes_read8(ctx, (ctx->db << 16) | 0x0766)) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    if (!(ctx->p & 0x01)) return 0x008F37;
+    else return 0x008EF8;
+    return 0;
+}
+
+/* SNES Basic Block 0x008EF2 - 0x008EF6 */
+uint32_t bb_008EF2(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x07 at 0x008EF2 */
+    ctx->p = (((ctx->a & 0xFF) == snes_read8(ctx, (ctx->db << 16) | 0x0766)) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    if (!(ctx->p & 0x01)) return 0x008F37;
+    else return 0x008EF8;
+    return 0;
+}
+
 /* SNES Basic Block 0x008EF8 - 0x008F00 */
 uint32_t bb_008EF8(SnesCpuContext* ctx) {
     (void)ctx;
@@ -3926,6 +6422,576 @@ uint32_t bb_008EF8(SnesCpuContext* ctx) {
     /* unknown snes opcode 0x15 at 0x008EFE */
     /* unknown snes opcode 0x00 at 0x008EFF */
     return 0x008EF2;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F02 - 0x008F05 */
+uint32_t bb_008F02(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x008F02 */
+    ctx->p = (((ctx->a & 0xFF) == 0x01) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    if (ctx->p & 0x02) return 0x008F28;
+    else return 0x008F07;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F07 - 0x008F07 */
+uint32_t bb_008F07(SnesCpuContext* ctx) {
+    (void)ctx;
+    return 0x008F14;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F14 - 0x008F15 */
+uint32_t bb_008F14(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0xBF at 0x008F14 */
+    if (!(ctx->p & 0x80)) return 0x008F17;
+    else return 0x008F17;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F17 - 0x008F17 */
+uint32_t bb_008F17(SnesCpuContext* ctx) {
+    (void)ctx;
+    return 0x008F39;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F19 - 0x008F1C */
+uint32_t bb_008F19(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0xB3 at 0x008F19 */
+    /* unknown snes opcode 0x92 at 0x008F1A */
+    /* unknown snes opcode 0xBF at 0x008F1B */
+    if (!(ctx->p & 0x80)) return 0x008F1E;
+    else return 0x008F1E;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F1E - 0x008F1E */
+uint32_t bb_008F1E(SnesCpuContext* ctx) {
+    (void)ctx;
+    return 0x008F40;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F20 - 0x008F23 */
+uint32_t bb_008F20(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0xB3 at 0x008F20 */
+    /* unknown snes opcode 0x92 at 0x008F21 */
+    /* unknown snes opcode 0xBF at 0x008F22 */
+    if (!(ctx->p & 0x80)) return 0x008F25;
+    else return 0x008F25;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F25 - 0x008F25 */
+uint32_t bb_008F25(SnesCpuContext* ctx) {
+    (void)ctx;
+    return 0x008EA7;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F27 - 0x008F2B */
+uint32_t bb_008F27(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->a & 0xFF00) | (((ctx->a & 0xFF) | snes_read8(ctx, (ctx->db << 16) | 0x5FAD)) & 0xFF);
+    /* unknown snes opcode 0x07 at 0x008F2A */
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8F2D);
+    recomp_snes_call(ctx, 0x0092B3);
+    return 0x008F2E;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F28 - 0x008F2B */
+uint32_t bb_008F28(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->db << 16) | 0x075F);
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8F2D);
+    recomp_snes_call(ctx, 0x0092B3);
+    return 0x008F2E;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F2E - 0x008F30 */
+uint32_t bb_008F2E(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->a & 0xFF00) | 0x00;
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8F32);
+    recomp_snes_call(ctx, 0x0092B3);
+    return 0x008F33;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F31 - 0x008F35 */
+uint32_t bb_008F31(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0xB3 at 0x008F31 */
+    /* unknown snes opcode 0x92 at 0x008F32 */
+    ctx->a = (ctx->a & 0xFF00) | 0x00;
+    return 0x008F76;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F33 - 0x008F35 */
+uint32_t bb_008F33(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->a & 0xFF00) | 0x00;
+    return 0x008F76;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F37 - 0x008F3F */
+uint32_t bb_008F37(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->db << 16) | 0x0781);
+    snes_write8(ctx, (ctx->dp + 0x02) & 0xFFFF, (uint8_t)ctx->a);
+    /* unknown snes opcode 0xDF at 0x008F3C */
+    /* unknown snes opcode 0x15 at 0x008F3D */
+    /* unknown snes opcode 0x00 at 0x008F3E */
+    return 0x008F31;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F39 - 0x008F3F */
+uint32_t bb_008F39(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x07 at 0x008F39 */
+    snes_write8(ctx, (ctx->dp + 0x02) & 0xFFFF, (uint8_t)ctx->a);
+    /* unknown snes opcode 0xDF at 0x008F3C */
+    /* unknown snes opcode 0x15 at 0x008F3D */
+    /* unknown snes opcode 0x00 at 0x008F3E */
+    return 0x008F31;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F40 - 0x008F40 */
+uint32_t bb_008F40(SnesCpuContext* ctx) {
+    (void)ctx;
+    if (ctx->p & 0x02) return 0x008F48;
+    else return 0x008F42;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F41 - 0x008F44 */
+uint32_t bb_008F41(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x06 at 0x008F41 */
+    ctx->p = (((ctx->a & 0xFF) == 0x01) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    if (ctx->p & 0x02) return 0x008F67;
+    else return 0x008F46;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F42 - 0x008F44 */
+uint32_t bb_008F42(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p = (((ctx->a & 0xFF) == 0x01) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    if (ctx->p & 0x02) return 0x008F67;
+    else return 0x008F46;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F46 - 0x008F46 */
+uint32_t bb_008F46(SnesCpuContext* ctx) {
+    (void)ctx;
+    return 0x008F53;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F48 - 0x008F49 */
+uint32_t bb_008F48(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0xBF at 0x008F48 */
+    if (!(ctx->p & 0x80)) return 0x008F4B;
+    else return 0x008F4B;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F4B - 0x008F4B */
+uint32_t bb_008F4B(SnesCpuContext* ctx) {
+    (void)ctx;
+    return 0x008F7D;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F4D - 0x008F51 */
+uint32_t bb_008F4D(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x19 at 0x008F4D */
+    ctx->p = (((ctx->a & 0xFF) == snes_read8(ctx, (ctx->db << 16) | 0x0766)) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    if (!(ctx->p & 0x01)) return 0x008F67;
+    else return 0x008F53;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F53 - 0x008F54 */
+uint32_t bb_008F53(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0xBF at 0x008F53 */
+    if (!(ctx->p & 0x80)) return 0x008F56;
+    else return 0x008F56;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F56 - 0x008F56 */
+uint32_t bb_008F56(SnesCpuContext* ctx) {
+    (void)ctx;
+    return 0x008F78;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F58 - 0x008F5B */
+uint32_t bb_008F58(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0xB3 at 0x008F58 */
+    /* unknown snes opcode 0x92 at 0x008F59 */
+    /* unknown snes opcode 0xBF at 0x008F5A */
+    if (!(ctx->p & 0x80)) return 0x008F5D;
+    else return 0x008F5D;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F5D - 0x008F5D */
+uint32_t bb_008F5D(SnesCpuContext* ctx) {
+    (void)ctx;
+    return 0x008F7F;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F5F - 0x008F62 */
+uint32_t bb_008F5F(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0xB3 at 0x008F5F */
+    /* unknown snes opcode 0x92 at 0x008F60 */
+    /* unknown snes opcode 0xBF at 0x008F61 */
+    if (!(ctx->p & 0x80)) return 0x008F64;
+    else return 0x008F64;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F64 - 0x008F64 */
+uint32_t bb_008F64(SnesCpuContext* ctx) {
+    (void)ctx;
+    return 0x008EE6;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F66 - 0x008F6A */
+uint32_t bb_008F66(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x0F at 0x008F66 */
+    ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->db << 16) | 0x0766);
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8F6C);
+    recomp_snes_call(ctx, 0x0092B3);
+    return 0x008F6D;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F67 - 0x008F6A */
+uint32_t bb_008F67(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->db << 16) | 0x0766);
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8F6C);
+    recomp_snes_call(ctx, 0x0092B3);
+    return 0x008F6D;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F6D - 0x008F70 */
+uint32_t bb_008F6D(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->db << 16) | 0x0763);
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8F72);
+    recomp_snes_call(ctx, 0x0092B3);
+    return 0x008F73;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F73 - 0x008F76 */
+uint32_t bb_008F73(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->db << 16) | 0x0767);
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8F78);
+    recomp_snes_call(ctx, 0x0092B3);
+    return 0x008F79;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F74 - 0x008F76 */
+uint32_t bb_008F74(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x67 at 0x008F74 */
+    /* unknown snes opcode 0x07 at 0x008F75 */
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8F78);
+    recomp_snes_call(ctx, 0x0092B3);
+    return 0x008F79;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F76 - 0x008F76 */
+uint32_t bb_008F76(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8F78);
+    recomp_snes_call(ctx, 0x0092B3);
+    return 0x008F79;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F78 - 0x008F91 */
+uint32_t bb_008F78(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x92 at 0x008F78 */
+    ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->db << 16) | 0x075A);
+    snes_write8(ctx, (ctx->dp + 0x04) & 0xFFFF, (uint8_t)ctx->a);
+    ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->db << 16) | 0x0761);
+    snes_write8(ctx, (ctx->dp + 0x05) & 0xFFFF, (uint8_t)ctx->a);
+    ctx->p &= ~0x20; /* rep #0x20 */
+    ctx->a = snes_read16(ctx, (ctx->db << 16) | 0x0753);
+    ctx->a &= 0x00FF;
+    ctx->y = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
+    ctx->p |= 0x20; /* sep #0x20 */
+    /* unknown snes opcode 0xB9 at 0x008F8E */
+    /* unknown snes opcode 0x04 at 0x008F8F */
+    /* unknown snes opcode 0x00 at 0x008F90 */
+    if (!(ctx->p & 0x80)) return 0x008F95;
+    else return 0x008F93;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F79 - 0x008F91 */
+uint32_t bb_008F79(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->db << 16) | 0x075A);
+    snes_write8(ctx, (ctx->dp + 0x04) & 0xFFFF, (uint8_t)ctx->a);
+    ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->db << 16) | 0x0761);
+    snes_write8(ctx, (ctx->dp + 0x05) & 0xFFFF, (uint8_t)ctx->a);
+    ctx->p &= ~0x20; /* rep #0x20 */
+    ctx->a = snes_read16(ctx, (ctx->db << 16) | 0x0753);
+    ctx->a &= 0x00FF;
+    ctx->y = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
+    ctx->p |= 0x20; /* sep #0x20 */
+    /* unknown snes opcode 0xB9 at 0x008F8E */
+    /* unknown snes opcode 0x04 at 0x008F8F */
+    /* unknown snes opcode 0x00 at 0x008F90 */
+    if (!(ctx->p & 0x80)) return 0x008F95;
+    else return 0x008F93;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F7D - 0x008F91 */
+uint32_t bb_008F7D(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x04 at 0x008F7D */
+    ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->db << 16) | 0x0761);
+    snes_write8(ctx, (ctx->dp + 0x05) & 0xFFFF, (uint8_t)ctx->a);
+    ctx->p &= ~0x20; /* rep #0x20 */
+    ctx->a = snes_read16(ctx, (ctx->db << 16) | 0x0753);
+    ctx->a &= 0x00FF;
+    ctx->y = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
+    ctx->p |= 0x20; /* sep #0x20 */
+    /* unknown snes opcode 0xB9 at 0x008F8E */
+    /* unknown snes opcode 0x04 at 0x008F8F */
+    /* unknown snes opcode 0x00 at 0x008F90 */
+    if (!(ctx->p & 0x80)) return 0x008F95;
+    else return 0x008F93;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F7F - 0x008F91 */
+uint32_t bb_008F7F(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x61 at 0x008F7F */
+    /* unknown snes opcode 0x07 at 0x008F80 */
+    snes_write8(ctx, (ctx->dp + 0x05) & 0xFFFF, (uint8_t)ctx->a);
+    ctx->p &= ~0x20; /* rep #0x20 */
+    ctx->a = snes_read16(ctx, (ctx->db << 16) | 0x0753);
+    ctx->a &= 0x00FF;
+    ctx->y = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
+    ctx->p |= 0x20; /* sep #0x20 */
+    /* unknown snes opcode 0xB9 at 0x008F8E */
+    /* unknown snes opcode 0x04 at 0x008F8F */
+    /* unknown snes opcode 0x00 at 0x008F90 */
+    if (!(ctx->p & 0x80)) return 0x008F95;
+    else return 0x008F93;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F93 - 0x008F95 */
+uint32_t bb_008F93(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->a & 0xFF00) | 0x04;
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8F97);
+    recomp_snes_call(ctx, 0x0092B3);
+    return 0x008F98;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F95 - 0x008F95 */
+uint32_t bb_008F95(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8F97);
+    recomp_snes_call(ctx, 0x0092B3);
+    return 0x008F98;
+    return 0;
+}
+
+/* SNES Basic Block 0x008F98 - 0x008F9F */
+uint32_t bb_008F98(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (ctx->y & 0xFF)) : ctx->y;
+    ctx->a = (ctx->a & 0xFF00) | (((ctx->a & 0xFF) ^ 0x01) & 0xFF);
+    ctx->y = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
+    /* unknown snes opcode 0xB9 at 0x008F9C */
+    /* unknown snes opcode 0x04 at 0x008F9D */
+    /* unknown snes opcode 0x00 at 0x008F9E */
+    if (!(ctx->p & 0x80)) return 0x008FA3;
+    else return 0x008FA1;
+    return 0;
+}
+
+/* SNES Basic Block 0x008FA1 - 0x008FA3 */
+uint32_t bb_008FA1(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->a & 0xFF00) | 0x04;
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8FA5);
+    recomp_snes_call(ctx, 0x0092B3);
+    return 0x008FA6;
+    return 0;
+}
+
+/* SNES Basic Block 0x008FA3 - 0x008FA3 */
+uint32_t bb_008FA3(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8FA5);
+    recomp_snes_call(ctx, 0x0092B3);
+    return 0x008FA6;
+    return 0;
+}
+
+/* SNES Basic Block 0x008FA5 - 0x008FA7 */
+uint32_t bb_008FA5(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x92 at 0x008FA5 */
+    ctx->sp -= (ctx->p & 0x10) ? 1 : 2; if (ctx->p & 0x10) snes_write8(ctx, 0x000000 | ctx->sp, (uint8_t)ctx->x); else snes_write16(ctx, 0x000000 | ctx->sp, ctx->x);
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8FA9);
+    recomp_snes_call(ctx, 0x009043);
+    return 0x008FAA;
+    return 0;
+}
+
+/* SNES Basic Block 0x008FA6 - 0x008FA7 */
+uint32_t bb_008FA6(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->sp -= (ctx->p & 0x10) ? 1 : 2; if (ctx->p & 0x10) snes_write8(ctx, 0x000000 | ctx->sp, (uint8_t)ctx->x); else snes_write16(ctx, 0x000000 | ctx->sp, ctx->x);
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8FA9);
+    recomp_snes_call(ctx, 0x009043);
+    return 0x008FAA;
+    return 0;
+}
+
+/* SNES Basic Block 0x008FA9 - 0x008FA9 */
+uint32_t bb_008FA9(SnesCpuContext* ctx) {
+    (void)ctx;
+    if (!(ctx->p & 0x01)) return 0x008FA5;
+    else return 0x008FAB;
+    return 0;
+}
+
+/* SNES Basic Block 0x008FAA - 0x008FAC */
+uint32_t bb_008FAA(SnesCpuContext* ctx) {
+    (void)ctx;
+    if (ctx->p & 0x10) { ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->x = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }
+    /* unknown snes opcode 0xBF at 0x008FAB */
+    if (!(ctx->p & 0x80)) return 0x008FAE;
+    else return 0x008FAE;
+    return 0;
+}
+
+/* SNES Basic Block 0x008FAB - 0x008FAC */
+uint32_t bb_008FAB(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0xBF at 0x008FAB */
+    if (!(ctx->p & 0x80)) return 0x008FAE;
+    else return 0x008FAE;
+    return 0;
+}
+
+/* SNES Basic Block 0x008FAE - 0x008FAE */
+uint32_t bb_008FAE(SnesCpuContext* ctx) {
+    (void)ctx;
+    return 0x008FB5;
+    return 0;
+}
+
+/* SNES Basic Block 0x008FB0 - 0x008FB1 */
+uint32_t bb_008FB0(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x02 at 0x008FB0 */
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8FB3);
+    recomp_snes_call(ctx, 0x0092B3);
+    return 0x008FB4;
+    return 0;
+}
+
+/* SNES Basic Block 0x008FB4 - 0x008FB7 */
+uint32_t bb_008FB4(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->db << 16) | 0x077A);
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8FB9);
+    recomp_snes_call(ctx, 0x0092B3);
+    return 0x008FBA;
+    return 0;
+}
+
+/* SNES Basic Block 0x008FB5 - 0x008FB7 */
+uint32_t bb_008FB5(SnesCpuContext* ctx) {
+    (void)ctx;
+    if (ctx->p & 0x10) { ctx->y = (ctx->y & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->y = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }
+    /* unknown snes opcode 0x07 at 0x008FB6 */
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8FB9);
+    recomp_snes_call(ctx, 0x0092B3);
+    return 0x008FBA;
+    return 0;
+}
+
+/* SNES Basic Block 0x008FBA - 0x008FC3 */
+uint32_t bb_008FBA(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p &= ~0x20; /* rep #0x20 */
+    ctx->a = 0x0000;
+    ctx->p |= 0x01;
+    /* unknown snes opcode 0xE5 at 0x008FC0 */
+    /* unknown snes opcode 0x00 at 0x008FC1 */
+    /* unknown snes opcode 0x9F at 0x008FC2 */
+    if (!(ctx->p & 0x80)) return 0x008FC5;
+    else return 0x008FC5;
+    return 0;
+}
+
+/* SNES Basic Block 0x008FC5 - 0x008FC5 */
+uint32_t bb_008FC5(SnesCpuContext* ctx) {
+    (void)ctx;
+    return 0x008FA9;
+    return 0;
+}
+
+/* SNES Basic Block 0x008FC7 - 0x008FC7 */
+uint32_t bb_008FC7(SnesCpuContext* ctx) {
+    (void)ctx;
+    if (ctx->p & 0x80) return 0x008F74;
+    else return 0x008FC9;
+    return 0;
+}
+
+/* SNES Basic Block 0x008FC9 - 0x008FCB */
+uint32_t bb_008FC9(SnesCpuContext* ctx) {
+    (void)ctx;
+    if (ctx->p & 0x10) { ctx->y = (ctx->y & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->y = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }
+    if (ctx->p & 0x10) { ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->x = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }
+    { uint16_t ret_off = snes_read16(ctx, 0x000000 | ctx->sp + 1); uint8_t ret_bank = snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 3; return ((ret_bank << 16) | ret_off) + 1; } /* rtl */
     return 0;
 }
 
@@ -3940,6 +7006,325 @@ uint32_t bb_008FCC(SnesCpuContext* ctx) {
     ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, 0x701FF9);
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8FDD);
     recomp_snes_call(ctx, 0x0092B3);
+    return 0x008FDE;
+    return 0;
+}
+
+/* SNES Basic Block 0x008FDE - 0x008FE0 */
+uint32_t bb_008FDE(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->a & 0xFF00) | 0x00;
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8FE2);
+    recomp_snes_call(ctx, 0x0092B3);
+    return 0x008FE3;
+    return 0;
+}
+
+/* SNES Basic Block 0x008FDF - 0x008FE0 */
+uint32_t bb_008FDF(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x00 at 0x008FDF */
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8FE2);
+    recomp_snes_call(ctx, 0x0092B3);
+    return 0x008FE3;
+    return 0;
+}
+
+/* SNES Basic Block 0x008FE3 - 0x008FE5 */
+uint32_t bb_008FE3(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->a & 0xFF00) | 0x00;
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x8FE7);
+    recomp_snes_call(ctx, 0x0092B3);
+    return 0x008FE8;
+    return 0;
+}
+
+/* SNES Basic Block 0x008FE8 - 0x009000 */
+uint32_t bb_008FE8(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->db << 16) | 0x075A);
+    snes_write8(ctx, (ctx->dp + 0x04) & 0xFFFF, (uint8_t)ctx->a);
+    ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->db << 16) | 0x0761);
+    snes_write8(ctx, (ctx->dp + 0x05) & 0xFFFF, (uint8_t)ctx->a);
+    ctx->p &= ~0x20; /* rep #0x20 */
+    ctx->a = snes_read16(ctx, (ctx->db << 16) | 0x0753);
+    ctx->a &= 0x00FF;
+    ctx->y = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
+    ctx->p |= 0x20; /* sep #0x20 */
+    /* unknown snes opcode 0xB9 at 0x008FFD */
+    /* unknown snes opcode 0x04 at 0x008FFE */
+    /* unknown snes opcode 0x00 at 0x008FFF */
+    if (!(ctx->p & 0x80)) return 0x009004;
+    else return 0x009002;
+    return 0;
+}
+
+/* SNES Basic Block 0x009002 - 0x009004 */
+uint32_t bb_009002(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->a & 0xFF00) | 0x04;
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x9006);
+    recomp_snes_call(ctx, 0x0092B3);
+    return 0x009007;
+    return 0;
+}
+
+/* SNES Basic Block 0x009004 - 0x009004 */
+uint32_t bb_009004(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x9006);
+    recomp_snes_call(ctx, 0x0092B3);
+    return 0x009007;
+    return 0;
+}
+
+/* SNES Basic Block 0x009007 - 0x00900E */
+uint32_t bb_009007(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (ctx->y & 0xFF)) : ctx->y;
+    ctx->a = (ctx->a & 0xFF00) | (((ctx->a & 0xFF) ^ 0x01) & 0xFF);
+    ctx->y = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
+    /* unknown snes opcode 0xB9 at 0x00900B */
+    /* unknown snes opcode 0x04 at 0x00900C */
+    /* unknown snes opcode 0x00 at 0x00900D */
+    if (!(ctx->p & 0x80)) return 0x009012;
+    else return 0x009010;
+    return 0;
+}
+
+/* SNES Basic Block 0x009010 - 0x009012 */
+uint32_t bb_009010(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->a & 0xFF00) | 0x04;
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x9014);
+    recomp_snes_call(ctx, 0x0092B3);
+    return 0x009015;
+    return 0;
+}
+
+/* SNES Basic Block 0x009012 - 0x009012 */
+uint32_t bb_009012(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x9014);
+    recomp_snes_call(ctx, 0x0092B3);
+    return 0x009015;
+    return 0;
+}
+
+/* SNES Basic Block 0x009015 - 0x009016 */
+uint32_t bb_009015(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->sp -= (ctx->p & 0x10) ? 1 : 2; if (ctx->p & 0x10) snes_write8(ctx, 0x000000 | ctx->sp, (uint8_t)ctx->x); else snes_write16(ctx, 0x000000 | ctx->sp, ctx->x);
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x9018);
+    recomp_snes_call(ctx, 0x009043);
+    return 0x009019;
+    return 0;
+}
+
+/* SNES Basic Block 0x009016 - 0x009016 */
+uint32_t bb_009016(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x9018);
+    recomp_snes_call(ctx, 0x009043);
+    return 0x009019;
+    return 0;
+}
+
+/* SNES Basic Block 0x009019 - 0x00901E */
+uint32_t bb_009019(SnesCpuContext* ctx) {
+    (void)ctx;
+    if (ctx->p & 0x10) { ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->x = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }
+    ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, 0x701FF8);
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x9020);
+    recomp_snes_call(ctx, 0x0092B3);
+    return 0x009021;
+    return 0;
+}
+
+/* SNES Basic Block 0x009021 - 0x009024 */
+uint32_t bb_009021(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->db << 16) | 0x077A);
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x9026);
+    recomp_snes_call(ctx, 0x0092B3);
+    return 0x009027;
+    return 0;
+}
+
+/* SNES Basic Block 0x009027 - 0x009030 */
+uint32_t bb_009027(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p &= ~0x20; /* rep #0x20 */
+    ctx->a = 0x0000;
+    ctx->p |= 0x01;
+    /* unknown snes opcode 0xE5 at 0x00902D */
+    /* unknown snes opcode 0x00 at 0x00902E */
+    /* unknown snes opcode 0x9F at 0x00902F */
+    if (!(ctx->p & 0x80)) return 0x009032;
+    else return 0x009032;
+    return 0;
+}
+
+/* SNES Basic Block 0x009032 - 0x009032 */
+uint32_t bb_009032(SnesCpuContext* ctx) {
+    (void)ctx;
+    return 0x009016;
+    return 0;
+}
+
+/* SNES Basic Block 0x009034 - 0x009034 */
+uint32_t bb_009034(SnesCpuContext* ctx) {
+    (void)ctx;
+    if (ctx->p & 0x80) return 0x008FDF;
+    else return 0x009036;
+    return 0;
+}
+
+/* SNES Basic Block 0x009036 - 0x009042 */
+uint32_t bb_009036(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x00 at 0x009036 */
+    snes_write16(ctx, 0x701FF8, ctx->a);
+    snes_write16(ctx, 0x701FF9, ctx->a);
+    ctx->db = snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1;
+    if (ctx->p & 0x10) { ctx->y = (ctx->y & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->y = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }
+    if (ctx->p & 0x10) { ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->x = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }
+    { uint16_t ret_off = snes_read16(ctx, 0x000000 | ctx->sp + 1); uint8_t ret_bank = snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 3; return ((ret_bank << 16) | ret_off) + 1; } /* rtl */
+    return 0;
+}
+
+/* SNES Basic Block 0x009043 - 0x009059 */
+uint32_t bb_009043(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->db);
+    ctx->a = (ctx->a & 0xFF00) | 0x70;
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, (uint8_t)ctx->a);
+    ctx->db = snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1;
+    /* unknown snes opcode 0x0B at 0x009048 */
+    ctx->a = (ctx->a & 0xFF00) | 0x07;
+    /* unknown snes opcode 0xEB at 0x00904B */
+    ctx->a = (ctx->a & 0xFF00) | 0x00;
+    ctx->dp = (uint8_t)(ctx->a & 0xFF);
+    ctx->x = 0x0005;
+    ctx->p |= 0x01;
+    /* unknown snes opcode 0xB5 at 0x009053 */
+    ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) + 1) & 0xFF) : ((ctx->y + 1) & 0xFFFF);
+    /* unknown snes opcode 0xFD at 0x009055 */
+    ctx->p = ((ctx->x == 0xCA1F) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    if (!(ctx->p & 0x80)) return 0x009053;
+    else return 0x00905B;
+    return 0;
+}
+
+/* SNES Basic Block 0x009053 - 0x009059 */
+uint32_t bb_009053(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0xB5 at 0x009053 */
+    ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) + 1) & 0xFF) : ((ctx->y + 1) & 0xFFFF);
+    /* unknown snes opcode 0xFD at 0x009055 */
+    ctx->p = ((ctx->x == 0xCA1F) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    if (!(ctx->p & 0x80)) return 0x009053;
+    else return 0x00905B;
+    return 0;
+}
+
+/* SNES Basic Block 0x00905B - 0x00905B */
+uint32_t bb_00905B(SnesCpuContext* ctx) {
+    (void)ctx;
+    if (!(ctx->p & 0x01)) return 0x009069;
+    else return 0x00905D;
+    return 0;
+}
+
+/* SNES Basic Block 0x00905D - 0x009067 */
+uint32_t bb_00905D(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    /* unknown snes opcode 0xB5 at 0x00905E */
+    ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) + 1) & 0xFF) : ((ctx->y + 1) & 0xFFFF);
+    /* unknown snes opcode 0x9D at 0x009060 */
+    ctx->p = ((ctx->x == 0xE81F) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p = ((ctx->x == 0x0006) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    if (!(ctx->p & 0x01)) return 0x00905E;
+    else return 0x009069;
+    return 0;
+}
+
+/* SNES Basic Block 0x00905E - 0x009067 */
+uint32_t bb_00905E(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0xB5 at 0x00905E */
+    ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) + 1) & 0xFF) : ((ctx->y + 1) & 0xFFFF);
+    /* unknown snes opcode 0x9D at 0x009060 */
+    ctx->p = ((ctx->x == 0xE81F) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    ctx->p = ((ctx->x == 0x0006) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    if (!(ctx->p & 0x01)) return 0x00905E;
+    else return 0x009069;
+    return 0;
+}
+
+/* SNES Basic Block 0x009069 - 0x00906B */
+uint32_t bb_009069(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x2B at 0x009069 */
+    ctx->db = snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1;
+    { uint16_t ret = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; return ((ctx->pb << 16) | ret) + 1; } /* rts */
+    return 0;
+}
+
+/* SNES Basic Block 0x0092A0 - 0x0092A0 */
+uint32_t bb_0092A0(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x92A2);
+    recomp_snes_call(ctx, 0x0000A9);
+    return 0x0092A3;
+    return 0;
+}
+
+/* SNES Basic Block 0x0092A3 - 0x0092B2 */
+uint32_t bb_0092A3(SnesCpuContext* ctx) {
+    (void)ctx;
+    snes_write8(ctx, 0x7FFF03, (uint8_t)ctx->a);
+    ctx->p |= 0x30; /* sep #0x30 */
+    ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1;
+    snes_write8(ctx, (ctx->dp + 0x01) & 0xFFFF, (uint8_t)ctx->a);
+    ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1;
+    snes_write8(ctx, (ctx->dp + 0x00) & 0xFFFF, (uint8_t)ctx->a);
+    ctx->db = snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1;
+    if (ctx->p & 0x10) { ctx->y = (ctx->y & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->y = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }
+    if (ctx->p & 0x10) { ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->x = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }
+    { uint16_t ret_off = snes_read16(ctx, 0x000000 | ctx->sp + 1); uint8_t ret_bank = snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 3; return ((ret_bank << 16) | ret_off) + 1; } /* rtl */
+    return 0;
+}
+
+/* SNES Basic Block 0x0092B3 - 0x0092B4 */
+uint32_t bb_0092B3(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x9F at 0x0092B3 */
+    if (!(ctx->p & 0x80)) return 0x0092B6;
+    else return 0x0092B6;
+    return 0;
+}
+
+/* SNES Basic Block 0x0092B6 - 0x0092B6 */
+uint32_t bb_0092B6(SnesCpuContext* ctx) {
+    (void)ctx;
+    return 0x0092A0;
+    return 0;
+}
+
+/* SNES Basic Block 0x0092B8 - 0x0092C3 */
+uint32_t bb_0092B8(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p &= ~0x01;
+    /* unknown snes opcode 0x65 at 0x0092B9 */
+    /* unknown snes opcode 0x00 at 0x0092BA */
+    snes_write8(ctx, (ctx->dp + 0x00) & 0xFFFF, (uint8_t)ctx->a);
+    ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->dp + 0x01) & 0xFFFF);
+    ctx->a = (ctx->a & 0xFF00) | (((ctx->a & 0xFF) + 0x00) & 0xFF);
+    snes_write8(ctx, (ctx->dp + 0x01) & 0xFFFF, (uint8_t)ctx->a);
+    { uint16_t ret = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; return ((ctx->pb << 16) | ret) + 1; } /* rts */
     return 0;
 }
 
@@ -3948,6 +7333,7 @@ uint32_t bb_009384(SnesCpuContext* ctx) {
     (void)ctx;
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x9386);
     recomp_snes_call(ctx, 0x0083FB);
+    return 0x009387;
     return 0;
 }
 
@@ -3967,6 +7353,7 @@ uint32_t bb_009387(SnesCpuContext* ctx) {
     snes_write8(ctx, 0x000000 | ctx->sp, ctx->pb);
     snes_write16(ctx, 0x000000 | ctx->sp + 1, 0x939E);
     recomp_snes_call(ctx, 0x0086D6);
+    return 0x00939F;
     return 0;
 }
 
@@ -3990,8 +7377,7 @@ uint32_t bb_00939F(SnesCpuContext* ctx) {
     ctx->a = 0x0200;
     snes_write16(ctx, (ctx->dp + 0x02) & 0xFFFF, ctx->a);
     ctx->x = (ctx->x & 0xFF00) | 0x00;
-    /* unknown snes opcode 0x86 at 0x0093CC */
-    /* unknown snes opcode 0x04 at 0x0093CD */
+    snes_write8(ctx, (ctx->dp + 0x04) & 0xFFFF, (uint8_t)ctx->x);
     snes_write16(ctx, (ctx->dp + 0x05) & 0xFFFF, ctx->a);
     ctx->y = (ctx->y & 0xFF00) | 0x01;
     snes_write8(ctx, (ctx->db << 16) | 0x420B, (uint8_t)ctx->y);
@@ -4002,8 +7388,7 @@ uint32_t bb_00939F(SnesCpuContext* ctx) {
     ctx->a = 0x9800;
     snes_write16(ctx, (ctx->dp + 0x02) & 0xFFFF, ctx->a);
     ctx->x = (ctx->x & 0xFF00) | 0x19;
-    /* unknown snes opcode 0x86 at 0x0093E7 */
-    /* unknown snes opcode 0x04 at 0x0093E8 */
+    snes_write8(ctx, (ctx->dp + 0x04) & 0xFFFF, (uint8_t)ctx->x);
     ctx->a = 0x0800;
     snes_write16(ctx, (ctx->dp + 0x05) & 0xFFFF, ctx->a);
     snes_write8(ctx, (ctx->db << 16) | 0x420B, (uint8_t)ctx->y);
@@ -4084,8 +7469,7 @@ uint32_t bb_009416(SnesCpuContext* ctx) {
     ctx->a = 0x0800;
     snes_write16(ctx, (ctx->dp + 0x02) & 0xFFFF, ctx->a);
     ctx->x = (ctx->x & 0xFF00) | 0x00;
-    /* unknown snes opcode 0x86 at 0x009424 */
-    /* unknown snes opcode 0x04 at 0x009425 */
+    snes_write8(ctx, (ctx->dp + 0x04) & 0xFFFF, (uint8_t)ctx->x);
     snes_write16(ctx, (ctx->dp + 0x05) & 0xFFFF, ctx->a);
     snes_write8(ctx, (ctx->db << 16) | 0x420B, (uint8_t)ctx->y);
     ctx->p |= 0x20; /* sep #0x20 */
@@ -4164,8 +7548,7 @@ uint32_t bb_00947F(SnesCpuContext* ctx) {
     ctx->a = 0x0200;
     snes_write16(ctx, (ctx->dp + 0x02) & 0xFFFF, ctx->a);
     ctx->x = (ctx->x & 0xFF00) | 0x00;
-    /* unknown snes opcode 0x86 at 0x0094AF */
-    /* unknown snes opcode 0x04 at 0x0094B0 */
+    snes_write8(ctx, (ctx->dp + 0x04) & 0xFFFF, (uint8_t)ctx->x);
     snes_write16(ctx, (ctx->dp + 0x05) & 0xFFFF, ctx->a);
     ctx->y = (ctx->y & 0xFF00) | 0x01;
     snes_write8(ctx, (ctx->db << 16) | 0x420B, (uint8_t)ctx->y);
@@ -4225,6 +7608,7 @@ uint32_t bb_00A530(SnesCpuContext* ctx) {
     ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | ((((ctx->a & 0xFF) << 1) | (ctx->p & 1)) & 0xFF)) : ((((ctx->a << 1) | (ctx->p & 1)) & 0xFFFF));
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0xA560);
     recomp_snes_call(ctx, 0x00A87B);
+    return 0x00A561;
     return 0;
 }
 
@@ -4235,12 +7619,17 @@ uint32_t bb_00A561(SnesCpuContext* ctx) {
     return 0;
 }
 
+/* SNES Basic Block 0x00A587 - 0x00A587 */
+uint32_t bb_00A587(SnesCpuContext* ctx) {
+    (void)ctx;
+    { uint16_t ret_off = snes_read16(ctx, 0x000000 | ctx->sp + 1); uint8_t ret_bank = snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 3; return ((ret_bank << 16) | ret_off) + 1; } /* rtl */
+    return 0;
+}
+
 /* SNES Basic Block 0x00A87B - 0x00A88A */
 uint32_t bb_00A87B(SnesCpuContext* ctx) {
     (void)ctx;
-    /* unknown snes opcode 0xAC at 0x00A87B */
-    /* unknown snes opcode 0x27 at 0x00A87C */
-    /* unknown snes opcode 0x02 at 0x00A87D */
+    ctx->y = snes_read16(ctx, (ctx->db << 16) | 0x0227);
     ctx->p &= ~0x20; /* rep #0x20 */
     ctx->a = snes_read16(ctx, 0x7F8000);
     ctx->x = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
@@ -4248,6 +7637,68 @@ uint32_t bb_00A87B(SnesCpuContext* ctx) {
     /* unknown snes opcode 0x9F at 0x00A888 */
     /* unknown snes opcode 0x02 at 0x00A889 */
     return 0x00A90B;
+    return 0;
+}
+
+/* SNES Basic Block 0x00A894 - 0x00A898 */
+uint32_t bb_00A894(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0xCB at 0x00A894 */
+    ctx->y = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
+    /* unknown snes opcode 0x9F at 0x00A896 */
+    /* unknown snes opcode 0x06 at 0x00A897 */
+    return 0x00A919;
+    return 0;
+}
+
+/* SNES Basic Block 0x00A8C9 - 0x00A8CA */
+uint32_t bb_00A8C9(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x02 at 0x00A8C9 */
+    { uint16_t ret = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; return ((ctx->pb << 16) | ret) + 1; } /* rts */
+    return 0;
+}
+
+/* SNES Basic Block 0x00A8D1 - 0x00A8D3 */
+uint32_t bb_00A8D1(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x02 at 0x00A8D1 */
+    /* unknown snes opcode 0x04 at 0x00A8D2 */
+    return 0x00A8DD;
+    return 0;
+}
+
+/* SNES Basic Block 0x00A8DD - 0x00A8E9 */
+uint32_t bb_00A8DD(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, ctx->a);
+    ctx->db = snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1;
+    ctx->p &= ~0x20; /* rep #0x20 */
+    ctx->y = snes_read16(ctx, (ctx->db << 16) | 0x8000);
+    ctx->a = 0xFB7E;
+    /* unknown snes opcode 0x99 at 0x00A8E7 */
+    /* unknown snes opcode 0x02 at 0x00A8E8 */
+    return 0x00A894;
+    return 0;
+}
+
+/* SNES Basic Block 0x00A90B - 0x00A910 */
+uint32_t bb_00A90B(SnesCpuContext* ctx) {
+    (void)ctx;
+    if (ctx->p & 0x10) { ctx->y = (ctx->y & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->y = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }
+    ctx->a = 0x9900;
+    /* unknown snes opcode 0x0E at 0x00A90F */
+    return 0x00A8D1;
+    return 0;
+}
+
+/* SNES Basic Block 0x00A919 - 0x00A91E */
+uint32_t bb_00A919(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (ctx->x & 0xFF)) : ctx->x;
+    ctx->a = 0x9900;
+    /* unknown snes opcode 0x12 at 0x00A91D */
+    return 0x00A8C9;
     return 0;
 }
 
@@ -4284,9 +7735,7 @@ uint32_t bb_00B6B8(SnesCpuContext* ctx) {
     ctx->a &= 0x0003;
     ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (((ctx->a & 0xFF) << 1) & 0xFF)) : ((ctx->a << 1) & 0xFFFF);
     ctx->y = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
-    /* unknown snes opcode 0xBE at 0x00B6C4 */
-    /* unknown snes opcode 0x1C at 0x00B6C5 */
-    /* unknown snes opcode 0xB7 at 0x00B6C6 */
+    ctx->x = snes_read16(ctx, (ctx->db << 16) | ((0xB71C + ctx->y) & 0xFFFF));
     ctx->y = 0x0047;
     ctx->a = 0x0000;
     /* unknown snes opcode 0x9F at 0x00B6CD */
@@ -4303,9 +7752,7 @@ uint32_t bb_00B6BE(SnesCpuContext* ctx) {
     ctx->a &= 0x0003;
     ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (((ctx->a & 0xFF) << 1) & 0xFF)) : ((ctx->a << 1) & 0xFFFF);
     ctx->y = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
-    /* unknown snes opcode 0xBE at 0x00B6C4 */
-    /* unknown snes opcode 0x1C at 0x00B6C5 */
-    /* unknown snes opcode 0xB7 at 0x00B6C6 */
+    ctx->x = snes_read16(ctx, (ctx->db << 16) | ((0xB71C + ctx->y) & 0xFFFF));
     ctx->y = 0x0047;
     ctx->a = 0x0000;
     /* unknown snes opcode 0x9F at 0x00B6CD */
@@ -4404,6 +7851,67 @@ uint32_t bb_00B700(SnesCpuContext* ctx) {
     return 0;
 }
 
+/* SNES Basic Block 0x00B719 - 0x00B72D */
+uint32_t bb_00B719(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x02 at 0x00B719 */
+    /* unknown snes opcode 0xFF at 0x00B71A */
+    /* unknown snes opcode 0x02 at 0x00B71B */
+    /* unknown snes opcode 0x00 at 0x00B71C */
+    /* unknown snes opcode 0x00 at 0x00B71D */
+    snes_write16(ctx, 0x011E00, ctx->a);
+    ctx->a = snes_read16(ctx, (ctx->db << 16) | 0x0001);
+    /* unknown snes opcode 0x01 at 0x00B725 */
+    /* unknown snes opcode 0xFF at 0x00B726 */
+    ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->db);
+    /* unknown snes opcode 0x4B at 0x00B728 */
+    ctx->db = snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1;
+    ctx->a = snes_read16(ctx, (ctx->db << 16) | 0x0227);
+    if (ctx->p & 0x80) return 0x00B73E;
+    else return 0x00B72F;
+    return 0;
+}
+
+/* SNES Basic Block 0x00B72F - 0x00B732 */
+uint32_t bb_00B72F(SnesCpuContext* ctx) {
+    (void)ctx;
+    snes_write16(ctx, (ctx->db << 16) | 0x020F, snes_read16(ctx, (ctx->db << 16) | 0x020F) - 1);
+    if (!(ctx->p & 0x02)) return 0x00B73E;
+    else return 0x00B734;
+    return 0;
+}
+
+/* SNES Basic Block 0x00B734 - 0x00B734 */
+uint32_t bb_00B734(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0xB736);
+    recomp_snes_call(ctx, 0x00BA3A);
+    return 0x00B737;
+    return 0;
+}
+
+/* SNES Basic Block 0x00B737 - 0x00B741 */
+uint32_t bb_00B737(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = 0x8D08;
+    /* unknown snes opcode 0x0F at 0x00B73A */
+    /* unknown snes opcode 0x02 at 0x00B73B */
+    snes_write16(ctx, (ctx->dp + 0xDE) & 0xFFFF, ctx->a);
+    ctx->a = snes_read16(ctx, (ctx->db << 16) | 0x0211);
+    if (ctx->p & 0x02) return 0x00B74D;
+    else return 0x00B743;
+    return 0;
+}
+
+/* SNES Basic Block 0x00B73E - 0x00B741 */
+uint32_t bb_00B73E(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = snes_read16(ctx, (ctx->db << 16) | 0x0211);
+    if (ctx->p & 0x02) return 0x00B74D;
+    else return 0x00B743;
+    return 0;
+}
+
 /* SNES Basic Block 0x00B741 - 0x00B741 */
 uint32_t bb_00B741(SnesCpuContext* ctx) {
     (void)ctx;
@@ -4426,6 +7934,7 @@ uint32_t bb_00B748(SnesCpuContext* ctx) {
     (void)ctx;
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0xB74A);
     recomp_snes_call(ctx, 0x00B99B);
+    return 0x00B74B;
     return 0;
 }
 
@@ -4456,6 +7965,138 @@ uint32_t bb_00B99B(SnesCpuContext* ctx) {
     ctx->a = 0x01C0;
     snes_write16(ctx, 0x7F049C, ctx->a);
     ctx->p |= 0x30; /* sep #0x30 */
+    { uint16_t ret = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; return ((ctx->pb << 16) | ret) + 1; } /* rts */
+    return 0;
+}
+
+/* SNES Basic Block 0x00BA3A - 0x00BA4E */
+uint32_t bb_00BA3A(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p &= ~0x30; /* rep #0x30 */
+    ctx->a = snes_read16(ctx, (ctx->db << 16) | 0x0227);
+    ctx->a &= 0x0007;
+    ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (((ctx->a & 0xFF) << 1) & 0xFF)) : ((ctx->a << 1) & 0xFFFF);
+    ctx->x = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
+    /* unknown snes opcode 0xBD at 0x00BA44 */
+    /* unknown snes opcode 0x6E at 0x00BA45 */
+    ctx->x = (ctx->p & 0x10) ? (ctx->sp & 0xFF) : ctx->sp;
+    snes_write16(ctx, (ctx->dp + 0x00) & 0xFFFF, ctx->a);
+    ctx->a = 0x03EE;
+    snes_write16(ctx, (ctx->dp + 0x04) & 0xFFFF, ctx->a);
+    ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0xBA50);
+    recomp_snes_call(ctx, 0x00BA82);
+    return 0x00BA51;
+    return 0;
+}
+
+/* SNES Basic Block 0x00BA51 - 0x00BA62 */
+uint32_t bb_00BA51(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0xBD at 0x00BA51 */
+    ctx->p |= 0x04;
+    ctx->x = (ctx->p & 0x10) ? (ctx->sp & 0xFF) : ctx->sp;
+    snes_write16(ctx, 0x7F04F0, ctx->a);
+    ctx->p |= 0x30; /* sep #0x30 */
+    snes_write8(ctx, (ctx->db << 16) | 0x0227, (snes_read8(ctx, (ctx->db << 16) | 0x0227) + 1) & 0xFF);
+    ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, (ctx->db << 16) | 0x0227);
+    ctx->p = (((ctx->a & 0xFF) == 0x05) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    if (!(ctx->p & 0x02)) return 0x00BA69;
+    else return 0x00BA64;
+    return 0;
+}
+
+/* SNES Basic Block 0x00BA64 - 0x00BA69 */
+uint32_t bb_00BA64(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->a & 0xFF00) | 0x80;
+    snes_write8(ctx, (ctx->db << 16) | 0x0227, (uint8_t)ctx->a);
+    { uint16_t ret = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; return ((ctx->pb << 16) | ret) + 1; } /* rts */
+    return 0;
+}
+
+/* SNES Basic Block 0x00BA69 - 0x00BA69 */
+uint32_t bb_00BA69(SnesCpuContext* ctx) {
+    (void)ctx;
+    { uint16_t ret = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; return ((ctx->pb << 16) | ret) + 1; } /* rts */
+    return 0;
+}
+
+/* SNES Basic Block 0x00BA82 - 0x00BA8B */
+uint32_t bb_00BA82(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->sp -= (ctx->p & 0x10) ? 1 : 2; if (ctx->p & 0x10) snes_write8(ctx, 0x000000 | ctx->sp, (uint8_t)ctx->x); else snes_write16(ctx, 0x000000 | ctx->sp, ctx->x);
+    ctx->sp -= (ctx->p & 0x10) ? 1 : 2; if (ctx->p & 0x10) snes_write8(ctx, 0x000000 | ctx->sp, (uint8_t)ctx->y); else snes_write16(ctx, 0x000000 | ctx->sp, ctx->y);
+    ctx->y = 0x0000;
+    ctx->x = snes_read16(ctx, (ctx->dp + 0x04) & 0xFFFF);
+    /* unknown snes opcode 0xB1 at 0x00BA89 */
+    /* unknown snes opcode 0x00 at 0x00BA8A */
+    if (ctx->p & 0x02) return 0x00BA99;
+    else return 0x00BA8D;
+    return 0;
+}
+
+/* SNES Basic Block 0x00BA87 - 0x00BA8B */
+uint32_t bb_00BA87(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->x = snes_read16(ctx, (ctx->dp + 0x04) & 0xFFFF);
+    /* unknown snes opcode 0xB1 at 0x00BA89 */
+    /* unknown snes opcode 0x00 at 0x00BA8A */
+    if (ctx->p & 0x02) return 0x00BA99;
+    else return 0x00BA8D;
+    return 0;
+}
+
+/* SNES Basic Block 0x00BA89 - 0x00BA8B */
+uint32_t bb_00BA89(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0xB1 at 0x00BA89 */
+    /* unknown snes opcode 0x00 at 0x00BA8A */
+    if (ctx->p & 0x02) return 0x00BA99;
+    else return 0x00BA8D;
+    return 0;
+}
+
+/* SNES Basic Block 0x00BA8D - 0x00BA8D */
+uint32_t bb_00BA8D(SnesCpuContext* ctx) {
+    (void)ctx;
+    if (ctx->p & 0x80) return 0x00BAA5;
+    else return 0x00BA8F;
+    return 0;
+}
+
+/* SNES Basic Block 0x00BA8F - 0x00BA97 */
+uint32_t bb_00BA8F(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x9F at 0x00BA8F */
+    /* unknown snes opcode 0x00 at 0x00BA90 */
+    /* unknown snes opcode 0x00 at 0x00BA91 */
+    /* unknown snes opcode 0x7F at 0x00BA92 */
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) + 1) & 0xFF) : ((ctx->y + 1) & 0xFFFF);
+    ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) + 1) & 0xFF) : ((ctx->y + 1) & 0xFFFF);
+    return 0x00BA89;
+    return 0;
+}
+
+/* SNES Basic Block 0x00BA99 - 0x00BAA3 */
+uint32_t bb_00BA99(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) + 1) & 0xFF) : ((ctx->y + 1) & 0xFFFF);
+    ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) + 1) & 0xFF) : ((ctx->y + 1) & 0xFFFF);
+    ctx->a = snes_read16(ctx, (ctx->dp + 0x04) & 0xFFFF);
+    ctx->p &= ~0x01;
+    ctx->a += 0x0040;
+    snes_write16(ctx, (ctx->dp + 0x04) & 0xFFFF, ctx->a);
+    return 0x00BA87;
+    return 0;
+}
+
+/* SNES Basic Block 0x00BAA5 - 0x00BAA7 */
+uint32_t bb_00BAA5(SnesCpuContext* ctx) {
+    (void)ctx;
+    if (ctx->p & 0x10) { ctx->y = (ctx->y & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->y = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }
+    if (ctx->p & 0x10) { ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->x = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }
     { uint16_t ret = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; return ((ctx->pb << 16) | ret) + 1; } /* rts */
     return 0;
 }
@@ -4976,12 +8617,84 @@ uint32_t bb_309096(SnesCpuContext* ctx) {
     return 0;
 }
 
+/* SNES Basic Block 0x309098 - 0x30909A */
+uint32_t bb_309098(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p = (((ctx->a & 0xFF) == 0x0A) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    if (!(ctx->p & 0x01)) return 0x3090A1;
+    else return 0x30909C;
+    return 0;
+}
+
+/* SNES Basic Block 0x30909C - 0x30909F */
+uint32_t bb_30909C(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->a & 0xFF00) | (((ctx->a & 0xFF) - 0x0A) & 0xFF);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    return 0x309098;
+    return 0;
+}
+
+/* SNES Basic Block 0x3090A1 - 0x3090A1 */
+uint32_t bb_3090A1(SnesCpuContext* ctx) {
+    (void)ctx;
+    { uint16_t ret = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; return ((ctx->pb << 16) | ret) + 1; } /* rts */
+    return 0;
+}
+
+/* SNES Basic Block 0x309D73 - 0x309D77 */
+uint32_t bb_309D73(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x00 at 0x309D73 */
+    /* unknown snes opcode 0x00 at 0x309D74 */
+    /* unknown snes opcode 0xBF at 0x309D75 */
+    /* unknown snes opcode 0x00 at 0x309D76 */
+    if (!(ctx->p & 0x80)) return 0x309DE9;
+    else return 0x309D79;
+    return 0;
+}
+
+/* SNES Basic Block 0x309D75 - 0x309D77 */
+uint32_t bb_309D75(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0xBF at 0x309D75 */
+    /* unknown snes opcode 0x00 at 0x309D76 */
+    if (!(ctx->p & 0x80)) return 0x309DE9;
+    else return 0x309D79;
+    return 0;
+}
+
+/* SNES Basic Block 0x309D79 - 0x309D81 */
+uint32_t bb_309D79(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x99 at 0x309D79 */
+    ctx->a = (ctx->a & 0xFF00) | (((ctx->a & 0xFF) ^ 0x1F) & 0xFF);
+    ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);
+    ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) + 1) & 0xFF) : ((ctx->y + 1) & 0xFFFF);
+    ctx->p = (((ctx->y & 0xFF) == 0x8D) ? (ctx->p | 0x02) : (ctx->p & ~0x02));
+    /* unknown snes opcode 0x00 at 0x309D80 */
+    if (!(ctx->p & 0x01)) return 0x309D75;
+    else return 0x309D83;
+    return 0;
+}
+
+/* SNES Basic Block 0x309D83 - 0x309D8E */
+uint32_t bb_309D83(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->p |= 0x10; /* sep #0x10 */
+    ctx->y = (ctx->y & 0xFF00) | 0x12;
+    snes_write8(ctx, (ctx->db << 16) | 0x0100, (snes_read8(ctx, (ctx->db << 16) | 0x0100) + 1) & 0xFF);
+    snes_write8(ctx, (ctx->dp + 0x12) & 0xFFFF, (uint8_t)ctx->y);
+    ctx->x = (ctx->x & 0xFF00) | 0x00;
+    return 0x309F47; /* jmp 0x309F47 */
+    return 0;
+}
+
 /* SNES Basic Block 0x309DBA - 0x309DC0 */
 uint32_t bb_309DBA(SnesCpuContext* ctx) {
     (void)ctx;
     ctx->x = (ctx->x & 0xFF00) | 0x02;
-    /* unknown snes opcode 0x86 at 0x309DBC */
-    /* unknown snes opcode 0x04 at 0x309DBD */
+    snes_write8(ctx, (ctx->dp + 0x04) & 0xFFFF, (uint8_t)ctx->x);
     /* unknown snes opcode 0x46 at 0x309DBE */
     /* unknown snes opcode 0x05 at 0x309DBF */
     if (ctx->p & 0x01) return 0x309E07;
@@ -4992,8 +8705,7 @@ uint32_t bb_309DBA(SnesCpuContext* ctx) {
 /* SNES Basic Block 0x309DBC - 0x309DC0 */
 uint32_t bb_309DBC(SnesCpuContext* ctx) {
     (void)ctx;
-    /* unknown snes opcode 0x86 at 0x309DBC */
-    /* unknown snes opcode 0x04 at 0x309DBD */
+    snes_write8(ctx, (ctx->dp + 0x04) & 0xFFFF, (uint8_t)ctx->x);
     /* unknown snes opcode 0x46 at 0x309DBE */
     /* unknown snes opcode 0x05 at 0x309DBF */
     if (ctx->p & 0x01) return 0x309E07;
@@ -5006,6 +8718,7 @@ uint32_t bb_309DC2(SnesCpuContext* ctx) {
     (void)ctx;
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x9DC4);
     recomp_snes_call(ctx, 0x309E16);
+    return 0x309DC5;
     return 0;
 }
 
@@ -5043,6 +8756,7 @@ uint32_t bb_309DD7(SnesCpuContext* ctx) {
     (void)ctx;
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x9DD9);
     recomp_snes_call(ctx, 0x309096);
+    return 0x309DDA;
     return 0;
 }
 
@@ -5050,8 +8764,7 @@ uint32_t bb_309DD7(SnesCpuContext* ctx) {
 uint32_t bb_309DDA(SnesCpuContext* ctx) {
     (void)ctx;
     /* unknown snes opcode 0x9B at 0x309DDA */
-    /* unknown snes opcode 0xA6 at 0x309DDB */
-    /* unknown snes opcode 0x00 at 0x309DDC */
+    ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, (ctx->dp + 0x00) & 0xFFFF);
     /* unknown snes opcode 0x9F at 0x309DDD */
     /* unknown snes opcode 0x81 at 0x309DDE */
     /* unknown snes opcode 0x83 at 0x309DDF */
@@ -5065,8 +8778,7 @@ uint32_t bb_309DDA(SnesCpuContext* ctx) {
 /* SNES Basic Block 0x309DDB - 0x309DE2 */
 uint32_t bb_309DDB(SnesCpuContext* ctx) {
     (void)ctx;
-    /* unknown snes opcode 0xA6 at 0x309DDB */
-    /* unknown snes opcode 0x00 at 0x309DDC */
+    ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, (ctx->dp + 0x00) & 0xFFFF);
     /* unknown snes opcode 0x9F at 0x309DDD */
     /* unknown snes opcode 0x81 at 0x309DDE */
     /* unknown snes opcode 0x83 at 0x309DDF */
@@ -5074,6 +8786,46 @@ uint32_t bb_309DDB(SnesCpuContext* ctx) {
     ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (ctx->y & 0xFF)) : ctx->y;
     if (!(ctx->p & 0x02)) return 0x309DE6;
     else return 0x309DE4;
+    return 0;
+}
+
+/* SNES Basic Block 0x309DE4 - 0x309DEE */
+uint32_t bb_309DE4(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->y = (ctx->y & 0xFF00) | 0xFC;
+    ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (ctx->y & 0xFF)) : ctx->y;
+    /* unknown snes opcode 0x9F at 0x309DE7 */
+    /* unknown snes opcode 0x7F at 0x309DE8 */
+    /* unknown snes opcode 0x83 at 0x309DE9 */
+    /* unknown snes opcode 0x7F at 0x309DEA */
+    ctx->a = (ctx->a & 0xFF00) | 0x38;
+    /* unknown snes opcode 0x9F at 0x309DED */
+    return 0x309D73;
+    return 0;
+}
+
+/* SNES Basic Block 0x309DE6 - 0x309DEE */
+uint32_t bb_309DE6(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (ctx->y & 0xFF)) : ctx->y;
+    /* unknown snes opcode 0x9F at 0x309DE7 */
+    /* unknown snes opcode 0x7F at 0x309DE8 */
+    /* unknown snes opcode 0x83 at 0x309DE9 */
+    /* unknown snes opcode 0x7F at 0x309DEA */
+    ctx->a = (ctx->a & 0xFF00) | 0x38;
+    /* unknown snes opcode 0x9F at 0x309DED */
+    return 0x309D73;
+    return 0;
+}
+
+/* SNES Basic Block 0x309DE9 - 0x309DEE */
+uint32_t bb_309DE9(SnesCpuContext* ctx) {
+    (void)ctx;
+    /* unknown snes opcode 0x83 at 0x309DE9 */
+    /* unknown snes opcode 0x7F at 0x309DEA */
+    ctx->a = (ctx->a & 0xFF00) | 0x38;
+    /* unknown snes opcode 0x9F at 0x309DED */
+    return 0x309D73;
     return 0;
 }
 
@@ -5085,8 +8837,7 @@ uint32_t bb_309E07(SnesCpuContext* ctx) {
     ctx->p |= 0x01;
     ctx->a = (ctx->a & 0xFF00) | (((ctx->a & 0xFF) - 0x24) & 0xFF);
     snes_write8(ctx, (ctx->dp + 0x00) & 0xFFFF, (uint8_t)ctx->a);
-    /* unknown snes opcode 0xA6 at 0x309E10 */
-    /* unknown snes opcode 0x04 at 0x309E11 */
+    ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, (ctx->dp + 0x04) & 0xFFFF);
     ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) - 1) & 0xFF) : ((ctx->x - 1) & 0xFFFF);
     if (!(ctx->p & 0x80)) return 0x309DBC;
     else return 0x309E15;
@@ -5119,6 +8870,23 @@ uint32_t bb_309E1D(SnesCpuContext* ctx) {
     ctx->p &= ~0x01;
     ctx->a += 0x023C;
     ctx->y = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
+    ctx->sp -= (ctx->p & 0x10) ? 1 : 2; if (ctx->p & 0x10) snes_write8(ctx, 0x000000 | ctx->sp, (uint8_t)ctx->x); else snes_write16(ctx, 0x000000 | ctx->sp, ctx->x);
+    ctx->sp -= (ctx->p & 0x10) ? 1 : 2; if (ctx->p & 0x10) snes_write8(ctx, 0x000000 | ctx->sp, (uint8_t)ctx->y); else snes_write16(ctx, 0x000000 | ctx->sp, ctx->y);
+    /* unknown snes opcode 0xBF at 0x309E27 */
+    snes_write16(ctx, (ctx->db << 16) | 0x7010, ctx->a);
+    snes_write16(ctx, (ctx->dp + 0x8A) & 0xFFFF, ctx->a);
+    ctx->p |= 0x20; /* sep #0x20 */
+    ctx->y = 0x008D;
+    /* unknown snes opcode 0xBF at 0x309E32 */
+    /* unknown snes opcode 0x00 at 0x309E33 */
+    if (!(ctx->p & 0x80)) return 0x309EA6;
+    else return 0x309E36;
+    return 0;
+}
+
+/* SNES Basic Block 0x309E25 - 0x309E34 */
+uint32_t bb_309E25(SnesCpuContext* ctx) {
+    (void)ctx;
     ctx->sp -= (ctx->p & 0x10) ? 1 : 2; if (ctx->p & 0x10) snes_write8(ctx, 0x000000 | ctx->sp, (uint8_t)ctx->x); else snes_write16(ctx, 0x000000 | ctx->sp, ctx->x);
     ctx->sp -= (ctx->p & 0x10) ? 1 : 2; if (ctx->p & 0x10) snes_write8(ctx, 0x000000 | ctx->sp, (uint8_t)ctx->y); else snes_write16(ctx, 0x000000 | ctx->sp, ctx->y);
     /* unknown snes opcode 0xBF at 0x309E27 */
@@ -5222,6 +8990,7 @@ uint32_t bb_309E5B(SnesCpuContext* ctx) {
     (void)ctx;
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x9E5D);
     recomp_snes_call(ctx, 0x309E16);
+    return 0x309E5E;
     return 0;
 }
 
@@ -5255,6 +9024,7 @@ uint32_t bb_309EA6(SnesCpuContext* ctx) {
     snes_write8(ctx, (ctx->db << 16) | 0x0DB3, 0);
     ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x9ED7);
     recomp_snes_call(ctx, 0x309F9C);
+    return 0x309ED8;
     return 0;
 }
 
@@ -5286,9 +9056,7 @@ uint32_t bb_309ED8(SnesCpuContext* ctx) {
     /* unknown snes opcode 0x02 at 0x309EF2 */
     /* unknown snes opcode 0x04 at 0x309EF3 */
     ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);
-    /* unknown snes opcode 0xAE at 0x309EF5 */
-    /* unknown snes opcode 0x92 at 0x309EF6 */
-    ctx->sp = ctx->a;
+    ctx->x = snes_read16(ctx, (ctx->db << 16) | 0x1B92);
     /* unknown snes opcode 0xBD at 0x309EF8 */
     /* unknown snes opcode 0xF1 at 0x309EF9 */
     snes_write8(ctx, (ctx->db << 16) | ((0xADAA + ctx->x) & 0xFFFF), 0);
@@ -5339,8 +9107,7 @@ uint32_t bb_309F05(SnesCpuContext* ctx) {
 /* SNES Basic Block 0x309F07 - 0x309F31 */
 uint32_t bb_309F07(SnesCpuContext* ctx) {
     (void)ctx;
-    /* unknown snes opcode 0x86 at 0x309F07 */
-    /* unknown snes opcode 0x00 at 0x309F08 */
+    snes_write16(ctx, (ctx->dp + 0x00) & 0xFFFF, ctx->x);
     ctx->a = (ctx->a & 0xFF00) | snes_read8(ctx, 0x7F837B);
     ctx->x = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;
     ctx->p &= ~0x20; /* rep #0x20 */
@@ -5454,6 +9221,20 @@ uint32_t bb_309F45(SnesCpuContext* ctx) {
     return 0;
 }
 
+/* SNES Basic Block 0x309F47 - 0x309F52 */
+uint32_t bb_309F47(SnesCpuContext* ctx) {
+    (void)ctx;
+    ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (ctx->x & 0xFF)) : ctx->x;
+    snes_write8(ctx, 0x7F837B, (uint8_t)ctx->a);
+    ctx->a = (ctx->a & 0xFF00) | 0xFF;
+    /* unknown snes opcode 0x9F at 0x309F4E */
+    /* unknown snes opcode 0x7D at 0x309F4F */
+    /* unknown snes opcode 0x83 at 0x309F50 */
+    /* unknown snes opcode 0x7F at 0x309F51 */
+    { uint16_t ret = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; return ((ctx->pb << 16) | ret) + 1; } /* rts */
+    return 0;
+}
+
 /* SNES Basic Block 0x309F9C - 0x309FA1 */
 uint32_t bb_309F9C(SnesCpuContext* ctx) {
     (void)ctx;
@@ -5470,9 +9251,7 @@ uint32_t recomp_snes_dispatch(SnesCpuContext* ctx, uint32_t target_vram) {
         case 0x0000A0: return bb_0000A0(ctx);
         case 0x0000A9: return bb_0000A9(ctx);
         case 0x0000BD: return bb_0000BD(ctx);
-        case 0x0000CD: return bb_0000CD(ctx);
         case 0x0000D3: return bb_0000D3(ctx);
-        case 0x0000D9: return bb_0000D9(ctx);
         case 0x0000E2: return bb_0000E2(ctx);
         case 0x000114: return bb_000114(ctx);
         case 0x000585: return bb_000585(ctx);
@@ -5488,9 +9267,15 @@ uint32_t recomp_snes_dispatch(SnesCpuContext* ctx, uint32_t target_vram) {
         case 0x0024EA: return bb_0024EA(ctx);
         case 0x002534: return bb_002534(ctx);
         case 0x002561: return bb_002561(ctx);
+        case 0x002587: return bb_002587(ctx);
         case 0x00503B: return bb_00503B(ctx);
+        case 0x00503E: return bb_00503E(ctx);
+        case 0x005046: return bb_005046(ctx);
+        case 0x00504E: return bb_00504E(ctx);
+        case 0x005056: return bb_005056(ctx);
         case 0x00505F: return bb_00505F(ctx);
         case 0x005062: return bb_005062(ctx);
+        case 0x005066: return bb_005066(ctx);
         case 0x00507E: return bb_00507E(ctx);
         case 0x005087: return bb_005087(ctx);
         case 0x00508E: return bb_00508E(ctx);
@@ -5498,31 +9283,143 @@ uint32_t recomp_snes_dispatch(SnesCpuContext* ctx, uint32_t target_vram) {
         case 0x005095: return bb_005095(ctx);
         case 0x00509B: return bb_00509B(ctx);
         case 0x0050A0: return bb_0050A0(ctx);
+        case 0x0050A8: return bb_0050A8(ctx);
         case 0x0050AA: return bb_0050AA(ctx);
         case 0x0050AC: return bb_0050AC(ctx);
+        case 0x0050AE: return bb_0050AE(ctx);
         case 0x0050B4: return bb_0050B4(ctx);
         case 0x0050B8: return bb_0050B8(ctx);
+        case 0x0050BA: return bb_0050BA(ctx);
         case 0x0050BC: return bb_0050BC(ctx);
+        case 0x0050C0: return bb_0050C0(ctx);
+        case 0x0050C4: return bb_0050C4(ctx);
+        case 0x0050CC: return bb_0050CC(ctx);
+        case 0x0050D4: return bb_0050D4(ctx);
+        case 0x0050DC: return bb_0050DC(ctx);
         case 0x0050E4: return bb_0050E4(ctx);
+        case 0x0050EC: return bb_0050EC(ctx);
         case 0x0050F0: return bb_0050F0(ctx);
+        case 0x0050F4: return bb_0050F4(ctx);
+        case 0x0050F9: return bb_0050F9(ctx);
+        case 0x005103: return bb_005103(ctx);
+        case 0x005105: return bb_005105(ctx);
+        case 0x005109: return bb_005109(ctx);
+        case 0x005111: return bb_005111(ctx);
+        case 0x005114: return bb_005114(ctx);
+        case 0x005115: return bb_005115(ctx);
+        case 0x00511D: return bb_00511D(ctx);
+        case 0x005121: return bb_005121(ctx);
+        case 0x00512D: return bb_00512D(ctx);
+        case 0x005131: return bb_005131(ctx);
+        case 0x005133: return bb_005133(ctx);
+        case 0x00513D: return bb_00513D(ctx);
+        case 0x00513E: return bb_00513E(ctx);
+        case 0x005144: return bb_005144(ctx);
+        case 0x005145: return bb_005145(ctx);
+        case 0x005149: return bb_005149(ctx);
+        case 0x00514D: return bb_00514D(ctx);
+        case 0x005150: return bb_005150(ctx);
+        case 0x005155: return bb_005155(ctx);
+        case 0x00515A: return bb_00515A(ctx);
+        case 0x005164: return bb_005164(ctx);
+        case 0x005166: return bb_005166(ctx);
+        case 0x00516A: return bb_00516A(ctx);
+        case 0x00516B: return bb_00516B(ctx);
+        case 0x005172: return bb_005172(ctx);
+        case 0x005175: return bb_005175(ctx);
+        case 0x005176: return bb_005176(ctx);
+        case 0x00517E: return bb_00517E(ctx);
+        case 0x005182: return bb_005182(ctx);
+        case 0x00518E: return bb_00518E(ctx);
+        case 0x005191: return bb_005191(ctx);
+        case 0x005192: return bb_005192(ctx);
+        case 0x005194: return bb_005194(ctx);
+        case 0x00519E: return bb_00519E(ctx);
+        case 0x0051A6: return bb_0051A6(ctx);
+        case 0x0051A7: return bb_0051A7(ctx);
+        case 0x0051A8: return bb_0051A8(ctx);
+        case 0x0051AA: return bb_0051AA(ctx);
+        case 0x0051AD: return bb_0051AD(ctx);
+        case 0x0051AE: return bb_0051AE(ctx);
+        case 0x0051B6: return bb_0051B6(ctx);
+        case 0x0051B9: return bb_0051B9(ctx);
+        case 0x0051C3: return bb_0051C3(ctx);
+        case 0x0051CC: return bb_0051CC(ctx);
+        case 0x0051D6: return bb_0051D6(ctx);
+        case 0x0051DB: return bb_0051DB(ctx);
+        case 0x0051DC: return bb_0051DC(ctx);
+        case 0x0051DE: return bb_0051DE(ctx);
+        case 0x0051E7: return bb_0051E7(ctx);
+        case 0x0051EA: return bb_0051EA(ctx);
+        case 0x0051F2: return bb_0051F2(ctx);
+        case 0x005200: return bb_005200(ctx);
+        case 0x005203: return bb_005203(ctx);
+        case 0x005207: return bb_005207(ctx);
+        case 0x005208: return bb_005208(ctx);
+        case 0x00520E: return bb_00520E(ctx);
+        case 0x00521A: return bb_00521A(ctx);
+        case 0x00521F: return bb_00521F(ctx);
+        case 0x005220: return bb_005220(ctx);
+        case 0x005224: return bb_005224(ctx);
+        case 0x005228: return bb_005228(ctx);
+        case 0x00522C: return bb_00522C(ctx);
+        case 0x00522F: return bb_00522F(ctx);
+        case 0x005234: return bb_005234(ctx);
+        case 0x00523C: return bb_00523C(ctx);
+        case 0x005245: return bb_005245(ctx);
+        case 0x005248: return bb_005248(ctx);
+        case 0x00524C: return bb_00524C(ctx);
+        case 0x005264: return bb_005264(ctx);
+        case 0x00526D: return bb_00526D(ctx);
+        case 0x005272: return bb_005272(ctx);
+        case 0x005274: return bb_005274(ctx);
+        case 0x005279: return bb_005279(ctx);
+        case 0x005281: return bb_005281(ctx);
+        case 0x005291: return bb_005291(ctx);
+        case 0x0052AA: return bb_0052AA(ctx);
+        case 0x0052B6: return bb_0052B6(ctx);
+        case 0x0052B9: return bb_0052B9(ctx);
+        case 0x0052CF: return bb_0052CF(ctx);
+        case 0x0052D2: return bb_0052D2(ctx);
+        case 0x0052D6: return bb_0052D6(ctx);
+        case 0x0052EE: return bb_0052EE(ctx);
+        case 0x0052F7: return bb_0052F7(ctx);
+        case 0x0052FE: return bb_0052FE(ctx);
+        case 0x005303: return bb_005303(ctx);
+        case 0x00530B: return bb_00530B(ctx);
+        case 0x005310: return bb_005310(ctx);
+        case 0x00531A: return bb_00531A(ctx);
+        case 0x00531C: return bb_00531C(ctx);
+        case 0x005328: return bb_005328(ctx);
+        case 0x00532B: return bb_00532B(ctx);
+        case 0x005334: return bb_005334(ctx);
+        case 0x005338: return bb_005338(ctx);
+        case 0x005340: return bb_005340(ctx);
         case 0x00534C: return bb_00534C(ctx);
         case 0x005350: return bb_005350(ctx);
         case 0x005354: return bb_005354(ctx);
         case 0x00535C: return bb_00535C(ctx);
         case 0x005364: return bb_005364(ctx);
         case 0x005369: return bb_005369(ctx);
+        case 0x00536C: return bb_00536C(ctx);
         case 0x005370: return bb_005370(ctx);
         case 0x005372: return bb_005372(ctx);
         case 0x005373: return bb_005373(ctx);
+        case 0x005374: return bb_005374(ctx);
         case 0x005375: return bb_005375(ctx);
         case 0x005378: return bb_005378(ctx);
+        case 0x00537C: return bb_00537C(ctx);
         case 0x005381: return bb_005381(ctx);
         case 0x005384: return bb_005384(ctx);
+        case 0x005399: return bb_005399(ctx);
+        case 0x00539D: return bb_00539D(ctx);
+        case 0x0053A5: return bb_0053A5(ctx);
         case 0x0053A9: return bb_0053A9(ctx);
         case 0x0053AB: return bb_0053AB(ctx);
         case 0x0053AD: return bb_0053AD(ctx);
         case 0x0053B1: return bb_0053B1(ctx);
         case 0x0053B5: return bb_0053B5(ctx);
+        case 0x0053B6: return bb_0053B6(ctx);
         case 0x0053BC: return bb_0053BC(ctx);
         case 0x0053BD: return bb_0053BD(ctx);
         case 0x0053C2: return bb_0053C2(ctx);
@@ -5536,9 +9433,12 @@ uint32_t recomp_snes_dispatch(SnesCpuContext* ctx, uint32_t target_vram) {
         case 0x0053E1: return bb_0053E1(ctx);
         case 0x0053F2: return bb_0053F2(ctx);
         case 0x0053F6: return bb_0053F6(ctx);
+        case 0x0053FE: return bb_0053FE(ctx);
+        case 0x005403: return bb_005403(ctx);
         case 0x005406: return bb_005406(ctx);
         case 0x005408: return bb_005408(ctx);
         case 0x00540E: return bb_00540E(ctx);
+        case 0x00540F: return bb_00540F(ctx);
         case 0x005415: return bb_005415(ctx);
         case 0x005416: return bb_005416(ctx);
         case 0x00541B: return bb_00541B(ctx);
@@ -5550,22 +9450,49 @@ uint32_t recomp_snes_dispatch(SnesCpuContext* ctx, uint32_t target_vram) {
         case 0x005436: return bb_005436(ctx);
         case 0x00543A: return bb_00543A(ctx);
         case 0x00543F: return bb_00543F(ctx);
+        case 0x005443: return bb_005443(ctx);
+        case 0x00544B: return bb_00544B(ctx);
+        case 0x005457: return bb_005457(ctx);
         case 0x00545B: return bb_00545B(ctx);
         case 0x00545C: return bb_00545C(ctx);
+        case 0x00545F: return bb_00545F(ctx);
+        case 0x005467: return bb_005467(ctx);
+        case 0x005468: return bb_005468(ctx);
+        case 0x00546C: return bb_00546C(ctx);
+        case 0x00546E: return bb_00546E(ctx);
         case 0x00546F: return bb_00546F(ctx);
         case 0x005474: return bb_005474(ctx);
+        case 0x005477: return bb_005477(ctx);
         case 0x00547A: return bb_00547A(ctx);
         case 0x00547E: return bb_00547E(ctx);
+        case 0x00547F: return bb_00547F(ctx);
         case 0x005480: return bb_005480(ctx);
         case 0x005484: return bb_005484(ctx);
         case 0x005487: return bb_005487(ctx);
         case 0x00548C: return bb_00548C(ctx);
         case 0x00548F: return bb_00548F(ctx);
         case 0x005498: return bb_005498(ctx);
+        case 0x00549C: return bb_00549C(ctx);
+        case 0x0054A4: return bb_0054A4(ctx);
+        case 0x0054B0: return bb_0054B0(ctx);
         case 0x0054B4: return bb_0054B4(ctx);
         case 0x0054B8: return bb_0054B8(ctx);
+        case 0x0054C0: return bb_0054C0(ctx);
+        case 0x0054C1: return bb_0054C1(ctx);
+        case 0x0054C7: return bb_0054C7(ctx);
+        case 0x0054C8: return bb_0054C8(ctx);
+        case 0x0054D0: return bb_0054D0(ctx);
+        case 0x0054D3: return bb_0054D3(ctx);
+        case 0x0054D8: return bb_0054D8(ctx);
+        case 0x0054DD: return bb_0054DD(ctx);
         case 0x0054E0: return bb_0054E0(ctx);
+        case 0x0054E8: return bb_0054E8(ctx);
+        case 0x0054EC: return bb_0054EC(ctx);
+        case 0x0054ED: return bb_0054ED(ctx);
+        case 0x00551A: return bb_00551A(ctx);
         case 0x005520: return bb_005520(ctx);
+        case 0x00552C: return bb_00552C(ctx);
+        case 0x005536: return bb_005536(ctx);
         case 0x007F98: return bb_007F98(ctx);
         case 0x007FB2: return bb_007FB2(ctx);
         case 0x007FDB: return bb_007FDB(ctx);
@@ -5588,9 +9515,7 @@ uint32_t recomp_snes_dispatch(SnesCpuContext* ctx, uint32_t target_vram) {
         case 0x00809D: return bb_00809D(ctx);
         case 0x0080A0: return bb_0080A0(ctx);
         case 0x0080C7: return bb_0080C7(ctx);
-        case 0x0080CD: return bb_0080CD(ctx);
         case 0x0080D3: return bb_0080D3(ctx);
-        case 0x0080D9: return bb_0080D9(ctx);
         case 0x0080E2: return bb_0080E2(ctx);
         case 0x008114: return bb_008114(ctx);
         case 0x0083F8: return bb_0083F8(ctx);
@@ -5694,11 +9619,101 @@ uint32_t recomp_snes_dispatch(SnesCpuContext* ctx, uint32_t target_vram) {
         case 0x008DC3: return bb_008DC3(ctx);
         case 0x008DC5: return bb_008DC5(ctx);
         case 0x008DD1: return bb_008DD1(ctx);
+        case 0x008EA7: return bb_008EA7(ctx);
         case 0x008ECE: return bb_008ECE(ctx);
         case 0x008ED1: return bb_008ED1(ctx);
         case 0x008EE1: return bb_008EE1(ctx);
+        case 0x008EE6: return bb_008EE6(ctx);
+        case 0x008EE9: return bb_008EE9(ctx);
+        case 0x008EED: return bb_008EED(ctx);
+        case 0x008EF0: return bb_008EF0(ctx);
+        case 0x008EF2: return bb_008EF2(ctx);
         case 0x008EF8: return bb_008EF8(ctx);
+        case 0x008F02: return bb_008F02(ctx);
+        case 0x008F07: return bb_008F07(ctx);
+        case 0x008F14: return bb_008F14(ctx);
+        case 0x008F17: return bb_008F17(ctx);
+        case 0x008F19: return bb_008F19(ctx);
+        case 0x008F1E: return bb_008F1E(ctx);
+        case 0x008F20: return bb_008F20(ctx);
+        case 0x008F25: return bb_008F25(ctx);
+        case 0x008F27: return bb_008F27(ctx);
+        case 0x008F28: return bb_008F28(ctx);
+        case 0x008F2E: return bb_008F2E(ctx);
+        case 0x008F31: return bb_008F31(ctx);
+        case 0x008F33: return bb_008F33(ctx);
+        case 0x008F37: return bb_008F37(ctx);
+        case 0x008F39: return bb_008F39(ctx);
+        case 0x008F40: return bb_008F40(ctx);
+        case 0x008F41: return bb_008F41(ctx);
+        case 0x008F42: return bb_008F42(ctx);
+        case 0x008F46: return bb_008F46(ctx);
+        case 0x008F48: return bb_008F48(ctx);
+        case 0x008F4B: return bb_008F4B(ctx);
+        case 0x008F4D: return bb_008F4D(ctx);
+        case 0x008F53: return bb_008F53(ctx);
+        case 0x008F56: return bb_008F56(ctx);
+        case 0x008F58: return bb_008F58(ctx);
+        case 0x008F5D: return bb_008F5D(ctx);
+        case 0x008F5F: return bb_008F5F(ctx);
+        case 0x008F64: return bb_008F64(ctx);
+        case 0x008F66: return bb_008F66(ctx);
+        case 0x008F67: return bb_008F67(ctx);
+        case 0x008F6D: return bb_008F6D(ctx);
+        case 0x008F73: return bb_008F73(ctx);
+        case 0x008F74: return bb_008F74(ctx);
+        case 0x008F76: return bb_008F76(ctx);
+        case 0x008F78: return bb_008F78(ctx);
+        case 0x008F79: return bb_008F79(ctx);
+        case 0x008F7D: return bb_008F7D(ctx);
+        case 0x008F7F: return bb_008F7F(ctx);
+        case 0x008F93: return bb_008F93(ctx);
+        case 0x008F95: return bb_008F95(ctx);
+        case 0x008F98: return bb_008F98(ctx);
+        case 0x008FA1: return bb_008FA1(ctx);
+        case 0x008FA3: return bb_008FA3(ctx);
+        case 0x008FA5: return bb_008FA5(ctx);
+        case 0x008FA6: return bb_008FA6(ctx);
+        case 0x008FA9: return bb_008FA9(ctx);
+        case 0x008FAA: return bb_008FAA(ctx);
+        case 0x008FAB: return bb_008FAB(ctx);
+        case 0x008FAE: return bb_008FAE(ctx);
+        case 0x008FB0: return bb_008FB0(ctx);
+        case 0x008FB4: return bb_008FB4(ctx);
+        case 0x008FB5: return bb_008FB5(ctx);
+        case 0x008FBA: return bb_008FBA(ctx);
+        case 0x008FC5: return bb_008FC5(ctx);
+        case 0x008FC7: return bb_008FC7(ctx);
+        case 0x008FC9: return bb_008FC9(ctx);
         case 0x008FCC: return bb_008FCC(ctx);
+        case 0x008FDE: return bb_008FDE(ctx);
+        case 0x008FDF: return bb_008FDF(ctx);
+        case 0x008FE3: return bb_008FE3(ctx);
+        case 0x008FE8: return bb_008FE8(ctx);
+        case 0x009002: return bb_009002(ctx);
+        case 0x009004: return bb_009004(ctx);
+        case 0x009007: return bb_009007(ctx);
+        case 0x009010: return bb_009010(ctx);
+        case 0x009012: return bb_009012(ctx);
+        case 0x009015: return bb_009015(ctx);
+        case 0x009016: return bb_009016(ctx);
+        case 0x009019: return bb_009019(ctx);
+        case 0x009021: return bb_009021(ctx);
+        case 0x009027: return bb_009027(ctx);
+        case 0x009032: return bb_009032(ctx);
+        case 0x009034: return bb_009034(ctx);
+        case 0x009036: return bb_009036(ctx);
+        case 0x009043: return bb_009043(ctx);
+        case 0x009053: return bb_009053(ctx);
+        case 0x00905B: return bb_00905B(ctx);
+        case 0x00905D: return bb_00905D(ctx);
+        case 0x00905E: return bb_00905E(ctx);
+        case 0x009069: return bb_009069(ctx);
+        case 0x0092A0: return bb_0092A0(ctx);
+        case 0x0092A3: return bb_0092A3(ctx);
+        case 0x0092B3: return bb_0092B3(ctx);
+        case 0x0092B6: return bb_0092B6(ctx);
+        case 0x0092B8: return bb_0092B8(ctx);
         case 0x009384: return bb_009384(ctx);
         case 0x009387: return bb_009387(ctx);
         case 0x00939F: return bb_00939F(ctx);
@@ -5711,7 +9726,14 @@ uint32_t recomp_snes_dispatch(SnesCpuContext* ctx, uint32_t target_vram) {
         case 0x0094C3: return bb_0094C3(ctx);
         case 0x00A530: return bb_00A530(ctx);
         case 0x00A561: return bb_00A561(ctx);
+        case 0x00A587: return bb_00A587(ctx);
         case 0x00A87B: return bb_00A87B(ctx);
+        case 0x00A894: return bb_00A894(ctx);
+        case 0x00A8C9: return bb_00A8C9(ctx);
+        case 0x00A8D1: return bb_00A8D1(ctx);
+        case 0x00A8DD: return bb_00A8DD(ctx);
+        case 0x00A90B: return bb_00A90B(ctx);
+        case 0x00A919: return bb_00A919(ctx);
         case 0x00B67E: return bb_00B67E(ctx);
         case 0x00B690: return bb_00B690(ctx);
         case 0x00B6B8: return bb_00B6B8(ctx);
@@ -5725,14 +9747,37 @@ uint32_t recomp_snes_dispatch(SnesCpuContext* ctx, uint32_t target_vram) {
         case 0x00B6E3: return bb_00B6E3(ctx);
         case 0x00B6E5: return bb_00B6E5(ctx);
         case 0x00B700: return bb_00B700(ctx);
+        case 0x00B719: return bb_00B719(ctx);
+        case 0x00B72F: return bb_00B72F(ctx);
+        case 0x00B734: return bb_00B734(ctx);
+        case 0x00B737: return bb_00B737(ctx);
+        case 0x00B73E: return bb_00B73E(ctx);
         case 0x00B741: return bb_00B741(ctx);
         case 0x00B743: return bb_00B743(ctx);
         case 0x00B748: return bb_00B748(ctx);
         case 0x00B74B: return bb_00B74B(ctx);
         case 0x00B74D: return bb_00B74D(ctx);
         case 0x00B99B: return bb_00B99B(ctx);
+        case 0x00BA3A: return bb_00BA3A(ctx);
+        case 0x00BA51: return bb_00BA51(ctx);
+        case 0x00BA64: return bb_00BA64(ctx);
+        case 0x00BA69: return bb_00BA69(ctx);
+        case 0x00BA82: return bb_00BA82(ctx);
+        case 0x00BA87: return bb_00BA87(ctx);
+        case 0x00BA89: return bb_00BA89(ctx);
+        case 0x00BA8D: return bb_00BA8D(ctx);
+        case 0x00BA8F: return bb_00BA8F(ctx);
+        case 0x00BA99: return bb_00BA99(ctx);
+        case 0x00BAA5: return bb_00BAA5(ctx);
         case 0x150A0A: return bb_150A0A(ctx);
         case 0x309096: return bb_309096(ctx);
+        case 0x309098: return bb_309098(ctx);
+        case 0x30909C: return bb_30909C(ctx);
+        case 0x3090A1: return bb_3090A1(ctx);
+        case 0x309D73: return bb_309D73(ctx);
+        case 0x309D75: return bb_309D75(ctx);
+        case 0x309D79: return bb_309D79(ctx);
+        case 0x309D83: return bb_309D83(ctx);
         case 0x309DBA: return bb_309DBA(ctx);
         case 0x309DBC: return bb_309DBC(ctx);
         case 0x309DC2: return bb_309DC2(ctx);
@@ -5742,10 +9787,14 @@ uint32_t recomp_snes_dispatch(SnesCpuContext* ctx, uint32_t target_vram) {
         case 0x309DD7: return bb_309DD7(ctx);
         case 0x309DDA: return bb_309DDA(ctx);
         case 0x309DDB: return bb_309DDB(ctx);
+        case 0x309DE4: return bb_309DE4(ctx);
+        case 0x309DE6: return bb_309DE6(ctx);
+        case 0x309DE9: return bb_309DE9(ctx);
         case 0x309E07: return bb_309E07(ctx);
         case 0x309E15: return bb_309E15(ctx);
         case 0x309E16: return bb_309E16(ctx);
         case 0x309E1D: return bb_309E1D(ctx);
+        case 0x309E25: return bb_309E25(ctx);
         case 0x309E32: return bb_309E32(ctx);
         case 0x309E36: return bb_309E36(ctx);
         case 0x309E3D: return bb_309E3D(ctx);
@@ -5764,6 +9813,7 @@ uint32_t recomp_snes_dispatch(SnesCpuContext* ctx, uint32_t target_vram) {
         case 0x309F33: return bb_309F33(ctx);
         case 0x309F36: return bb_309F36(ctx);
         case 0x309F45: return bb_309F45(ctx);
+        case 0x309F47: return bb_309F47(ctx);
         case 0x309F9C: return bb_309F9C(ctx);
         default:
             printf("[SNES Dispatch] Unhandled target 0x%06X\n", target_vram);
@@ -5797,11 +9847,23 @@ void poll_snes_input(SnesCpuContext* ctx) {
 }
 
 void update_snes_screen(SnesCpuContext* ctx) {
+    bool has_mode7 = (ctx->m7a != 0 || ctx->m7b != 0 || ctx->m7c != 0 || ctx->m7d != 0);
     for (int y = 0; y < 224; y++) {
         for (int x = 0; x < 256; x++) {
             int idx = y * 256 + x;
             uint8_t r, g, b;
-            if (ctx->pixels_written > 100) {
+            if (has_mode7 && ctx->pixels_written > 100) {
+                /* Mode 7 Affine Formula: [X', Y'] = [A B; C D] * [X - X0, Y - Y0] + [X0, Y0] */
+                int sx = x - (ctx->m7x & 0x1FF);
+                int sy = y - (ctx->m7y & 0x1FF);
+                int mx = ((ctx->m7a * sx + ctx->m7b * sy) >> 8) + (ctx->m7x & 0x1FF);
+                int my = ((ctx->m7c * sx + ctx->m7d * sy) >> 8) + (ctx->m7y & 0x1FF);
+                uint32_t vaddr = ((my & 0xFF) * 256 + (mx & 0xFF)) % sizeof(ctx->vram);
+                uint8_t tile_pixel = ctx->vram[vaddr];
+                r = (tile_pixel & 0x07) << 5;
+                g = ((tile_pixel >> 3) & 0x07) << 5;
+                b = (tile_pixel & 0xC0);
+            } else if (ctx->pixels_written > 100) {
                 uint16_t tile_pixel = *(uint16_t*)&ctx->vram[(idx * 2) % sizeof(ctx->vram)];
                 r = ((tile_pixel >>  0) & 0x1F) << 3;
                 g = ((tile_pixel >>  5) & 0x1F) << 3;
@@ -5912,6 +9974,10 @@ int main(int argc, char** argv) {
     SnesCpuContext* ctx = &s_snes_ctx;
     ctx->sp = 0x01FF;  /* Initial SNES Stack Pointer */
     ctx->p  = 0x34;    /* Initial Status Register: M=1, X=1, I=1 */
+    ctx->spc700_ports[0] = 0xBB; /* SPC700 Audio Ready Handshake signature */
+    ctx->spc700_ports[1] = 0xAA;
+    ctx->m7a = 0x0100; /* Mode 7 1.0 identity scale */
+    ctx->m7d = 0x0100;
     uint32_t next_pc = 0x008000;
 #ifdef _WIN32
     if (launch_window) {
