@@ -1,0 +1,46 @@
+name: 🐛 Bug Report
+description: Report a broken feature, incorrect C generation, or build failure
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting an issue! Please provide as much detail as possible.
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what went wrong.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps To Reproduce
+      description: What commands or ROM triggered the problem?
+      value: |
+        1. Run `python recompile.py <path/to/rom>`
+        2. See error output: ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / Output
+      description: Please paste any terminal logs or compiler error messages here.
+      render: shell
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Operating System & Compiler
+      options:
+        - "Windows (MSVC Visual Studio 2022)"
+        - "Windows (Clang)"
+        - "Windows (GCC / MinGW)"
+        - "Linux (GCC)"
+        - "Linux (Clang)"
+        - "macOS"
+        - "Other"
+    validations:
+      required: true
