@@ -329,18 +329,24 @@ class ThumbLifter:
                         "c_code": f"{c} ctx->flag_z = (ctx->r[{rd}] == 0);"
                     })
                 elif sub_op == 1:  # LSR
-                    shift_val = offset5 if offset5 else 32
+                    if offset5 == 0:
+                        c_code = f"ctx->r[{rd}] = 0; ctx->flag_z = true;"
+                    else:
+                        c_code = f"ctx->r[{rd}] = ctx->r[{rs}] >> {offset5}; ctx->flag_z = (ctx->r[{rd}] == 0);"
                     ir_ops.append({
                         "pc": instr_pc,
                         "op": "LSR_IMM",
-                        "c_code": f"ctx->r[{rd}] = ctx->r[{rs}] >> {shift_val}; ctx->flag_z = (ctx->r[{rd}] == 0);"
+                        "c_code": c_code
                     })
                 elif sub_op == 2:  # ASR
-                    shift_val = offset5 if offset5 else 32
+                    if offset5 == 0:
+                        c_code = f"ctx->r[{rd}] = ((int32_t)ctx->r[{rs}] < 0) ? 0xFFFFFFFF : 0; ctx->flag_z = (ctx->r[{rd}] == 0);"
+                    else:
+                        c_code = f"ctx->r[{rd}] = (uint32_t)((int32_t)ctx->r[{rs}] >> {offset5}); ctx->flag_z = (ctx->r[{rd}] == 0);"
                     ir_ops.append({
                         "pc": instr_pc,
                         "op": "ASR_IMM",
-                        "c_code": f"ctx->r[{rd}] = (uint32_t)((int32_t)ctx->r[{rs}] >> {shift_val}); ctx->flag_z = (ctx->r[{rd}] == 0);"
+                        "c_code": c_code
                     })
 
             # 13. ALU Operations (Format 4: 0x4000 - 0x43FF)
