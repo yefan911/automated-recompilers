@@ -85,10 +85,12 @@ def compile_c_to_exe(c_source_path: str, output_exe_path: str, extra_libs: list 
     # 1. Try MSVC
     cl_path, msvc_env = get_msvc_environment()
     if cl_path and msvc_env:
+        obj_path = os.path.splitext(output_exe_path)[0] + ".obj"
         cmd = [
             cl_path,
             "/O2",               # Max speed optimization
             "/W3",               # Warning level 3
+            f"/Fo:{obj_path}",
             f"/Fe:{output_exe_path}",
             c_source_path,
         ]
@@ -101,6 +103,12 @@ def compile_c_to_exe(c_source_path: str, output_exe_path: str, extra_libs: list 
         res = subprocess.run(cmd, env=msvc_env, capture_output=True, text=True, errors="ignore")
         if res.returncode == 0 and os.path.exists(output_exe_path):
             print(f"[Compiler] Build Successful: {output_exe_path}")
+            # Clean up intermediate .obj file
+            if os.path.exists(obj_path):
+                try:
+                    os.remove(obj_path)
+                except OSError:
+                    pass
             return True
         else:
             print(f"[Compiler] MSVC compilation error (exit {res.returncode}):\n{res.stdout}\n{res.stderr}")
