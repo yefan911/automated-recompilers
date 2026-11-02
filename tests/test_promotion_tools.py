@@ -20,7 +20,8 @@ from scripts.generate_showcase import (
     compute_entropy_slices,
     generate_mermaid_cfg,
     generate_markdown_showcase,
-    generate_html_showcase
+    generate_html_showcase,
+    export_cfg_json
 )
 from src.lifter.arm_lifter import ArmLifter
 from src.core.rom_detector import inspect_file
@@ -115,6 +116,14 @@ def test_generate_showcase_flow(tmp_path):
     assert "mermaid.initialize" in html_output
     assert "ArmCpuContext" in html_output
 
+    # Test WebCFG JSON export
+    cfg_json = export_cfg_json(meta, cfg, entropy_slices, bench_time_ms=1.5)
+    assert "metadata" in cfg_json
+    assert "blocks" in cfg_json
+    assert "edges" in cfg_json
+    assert len(cfg_json["blocks"]) > 0
+    assert cfg_json["metadata"]["total_blocks"] > 0
+
 
 def test_opcode_bounty_tool():
     from scripts.opcode_bounty import format_quest, generate_markdown_bounties
@@ -162,4 +171,43 @@ def test_interactive_web_inspector_exists():
     assert "SNES (65816)" in html
     assert "PS1 (MIPS I)" in html
     assert "calculateBufferEntropy" in html
+    assert "microLifter" in html
+    assert "MICRO_PRESETS" in html
+    assert "runMicroLifter" in html
+
+
+def test_generate_release_notes():
+    from scripts.generate_release_notes import generate_release_notes
+
+    notes = generate_release_notes(tag="v0.1.0-test")
+    assert "Automated Game ROM Recompiler — Release `v0.1.0-test`" in notes
+    assert "recompiler-windows-x64.exe" in notes
+    assert "recompiler-linux-x64" in notes
+    assert "Multi-Console Recursive CFG Lifters" in notes
+    assert "Memory & RAM Optimizations" in notes
+    assert "Opcode Coverage" in notes
+    assert "Lifter Performance Benchmarks" in notes
+
+
+def test_webcfg_json_export(tmp_path):
+    from scripts.generate_showcase import export_cfg_json, compute_entropy_slices
+    from src.lifter.arm_lifter import ArmLifter
+    from src.core.rom_detector import inspect_file
+
+    rom_path = os.path.join(PROJECT_ROOT, "roms", "test", "hello_gba.gba")
+    meta = inspect_file(rom_path)
+    with open(rom_path, "rb") as f:
+        rom_bytes = f.read()
+    slices = compute_entropy_slices(rom_bytes, num_slices=4)
+    lifter = ArmLifter(rom_bytes, base_vram=0x08000000)
+    cfg = lifter.build_cfg(0x08000000)
+
+    dataset = export_cfg_json(meta, cfg, slices, bench_time_ms=0.5)
+    assert "metadata" in dataset
+    assert "blocks" in dataset
+    assert "edges" in dataset
+    assert len(dataset["blocks"]) == 5
+    assert len(dataset["edges"]) > 0
+    assert "ARM7TDMI" in dataset["metadata"]["architecture"]
+
 

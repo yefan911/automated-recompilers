@@ -8,7 +8,7 @@ This showcase demonstrates the end-to-end Ahead-of-Time (AOT) static recompilati
 - **Entry Vector:** `0x08000000`
 - **Discovered Basic Blocks:** **5**
 - **Total Lifted Instructions:** **20**
-- **CFG Extraction Latency:** **0.41 ms**
+- **CFG Extraction Latency:** **0.32 ms**
 
 ---
 

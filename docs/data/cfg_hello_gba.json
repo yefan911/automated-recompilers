@@ -1,0 +1,384 @@
+{
+  "metadata": {
+    "title": "Automated Game ROM Recompiler CFG Visualizer",
+    "rom_file": "roms/test/hello_gba.gba",
+    "console": "Game Boy Advance (GBA)",
+    "architecture": "ARM7TDMI (32-bit ARM + 16-bit Thumb)",
+    "entry_vector": "0x08000000",
+    "total_blocks": 5,
+    "total_instructions": 20,
+    "lift_time_ms": 0.32
+  },
+  "blocks": [
+    {
+      "vram": "0x08000000",
+      "start_vram": 134217728,
+      "end_vram": 134217728,
+      "func_name": "bb_08000000",
+      "is_entry": true,
+      "is_terminal": false,
+      "is_loop": false,
+      "terminator_type": "BRANCH",
+      "instructions_count": 1,
+      "instructions": [
+        {
+          "pc": 134217728,
+          "op": "BRANCH",
+          "target": 134217920,
+          "c_code": "return 0x080000C0; /* branch to 0x080000C0 */"
+        }
+      ],
+      "c_code": "/* Basic Block 0x08000000 - 0x08000000 */\nuint32_t bb_08000000(ArmCpuContext* ctx) {\n    (void)ctx;\n    return 0x080000C0; /* branch to 0x080000C0 */\n}\n",
+      "successors": [
+        "0x080000C0"
+      ]
+    },
+    {
+      "vram": "0x080000C0",
+      "start_vram": 134217920,
+      "end_vram": 134217936,
+      "func_name": "bb_080000C0",
+      "is_entry": false,
+      "is_terminal": false,
+      "is_loop": false,
+      "terminator_type": "BRANCH",
+      "instructions_count": 5,
+      "instructions": [
+        {
+          "pc": 134217920,
+          "op": "MOV_IMM",
+          "rd": 0,
+          "c_code": "ctx->r[0] = 0x04000000;",
+          "val": 67108864
+        },
+        {
+          "pc": 134217924,
+          "op": "LDR_CONST",
+          "rd": 1,
+          "val": 1027,
+          "c_code": "ctx->r[1] = 0x00000403; /* loaded from 0x080000EC */"
+        },
+        {
+          "pc": 134217928,
+          "op": "STRH",
+          "rd": 1,
+          "c_code": "mem_write16(ctx, ctx->r[0], (uint16_t)ctx->r[1]);"
+        },
+        {
+          "pc": 134217932,
+          "op": "CALL",
+          "target": 134217984,
+          "c_code": "ctx->r[14] = 0x080000D0;\n    recomp_call(ctx, 0x08000100);"
+        },
+        {
+          "pc": 134217936,
+          "op": "BRANCH",
+          "target": 134217936,
+          "c_code": "return 0x00000000; /* infinite loop halt */"
+        }
+      ],
+      "c_code": "/* Basic Block 0x080000C0 - 0x080000D0 */\nuint32_t bb_080000C0(ArmCpuContext* ctx) {\n    (void)ctx;\n    ctx->r[0] = 0x04000000;\n    ctx->r[1] = 0x00000403; /* loaded from 0x080000EC */\n    mem_write16(ctx, ctx->r[0], (uint16_t)ctx->r[1]);\n    ctx->r[14] = 0x080000D0;\n    recomp_call(ctx, 0x08000100);\n    return 0x00000000; /* infinite loop halt */\n}\n",
+      "successors": [
+        "0x08000100"
+      ]
+    },
+    {
+      "vram": "0x08000100",
+      "start_vram": 134217984,
+      "end_vram": 134218012,
+      "func_name": "bb_08000100",
+      "is_entry": false,
+      "is_terminal": false,
+      "is_loop": false,
+      "terminator_type": "BRANCH",
+      "instructions_count": 8,
+      "instructions": [
+        {
+          "pc": 134217984,
+          "op": "MOV_IMM",
+          "rd": 0,
+          "c_code": "ctx->r[0] = 0x06000000;",
+          "val": 100663296
+        },
+        {
+          "pc": 134217988,
+          "op": "LDR_CONST",
+          "rd": 1,
+          "val": 2400,
+          "c_code": "ctx->r[1] = 0x00000960; /* loaded from 0x08000128 */"
+        },
+        {
+          "pc": 134217992,
+          "op": "MOV_IMM",
+          "rd": 2,
+          "c_code": "ctx->r[2] = 0x0000001F;",
+          "val": 31
+        },
+        {
+          "pc": 134217996,
+          "op": "STRH",
+          "rd": 2,
+          "c_code": "mem_write16(ctx, ctx->r[0], (uint16_t)ctx->r[2]);"
+        },
+        {
+          "pc": 134218000,
+          "op": "ADD",
+          "rd": 0,
+          "c_code": "ctx->r[0] = ctx->r[0] + 0x00000002;"
+        },
+        {
+          "pc": 134218004,
+          "op": "ADD",
+          "rd": 2,
+          "c_code": "ctx->r[2] = ctx->r[2] + 0x00000001;"
+        },
+        {
+          "pc": 134218008,
+          "op": "SUB",
+          "rd": 1,
+          "c_code": "ctx->r[1] = ctx->r[1] - 0x00000001; ctx->flag_z = (ctx->r[1] == 0);"
+        },
+        {
+          "pc": 134218012,
+          "op": "COND_BRANCH",
+          "target": 134217996,
+          "fallthrough": 134218016,
+          "c_code": "if (!ctx->flag_z) return 0x0800010C;\n    else return 0x08000120;"
+        }
+      ],
+      "c_code": "/* Basic Block 0x08000100 - 0x0800011C */\nuint32_t bb_08000100(ArmCpuContext* ctx) {\n    (void)ctx;\n    ctx->r[0] = 0x06000000;\n    ctx->r[1] = 0x00000960; /* loaded from 0x08000128 */\n    ctx->r[2] = 0x0000001F;\n    mem_write16(ctx, ctx->r[0], (uint16_t)ctx->r[2]);\n    ctx->r[0] = ctx->r[0] + 0x00000002;\n    ctx->r[2] = ctx->r[2] + 0x00000001;\n    ctx->r[1] = ctx->r[1] - 0x00000001; ctx->flag_z = (ctx->r[1] == 0);\n    if (!ctx->flag_z) return 0x0800010C;\n    else return 0x08000120;\n}\n",
+      "successors": [
+        "0x0800010C",
+        "0x08000120"
+      ]
+    },
+    {
+      "vram": "0x0800010C",
+      "start_vram": 134217996,
+      "end_vram": 134218012,
+      "func_name": "bb_0800010C",
+      "is_entry": false,
+      "is_terminal": false,
+      "is_loop": true,
+      "terminator_type": "BRANCH",
+      "instructions_count": 5,
+      "instructions": [
+        {
+          "pc": 134217996,
+          "op": "STRH",
+          "rd": 2,
+          "c_code": "mem_write16(ctx, ctx->r[0], (uint16_t)ctx->r[2]);"
+        },
+        {
+          "pc": 134218000,
+          "op": "ADD",
+          "rd": 0,
+          "c_code": "ctx->r[0] = ctx->r[0] + 0x00000002;"
+        },
+        {
+          "pc": 134218004,
+          "op": "ADD",
+          "rd": 2,
+          "c_code": "ctx->r[2] = ctx->r[2] + 0x00000001;"
+        },
+        {
+          "pc": 134218008,
+          "op": "SUB",
+          "rd": 1,
+          "c_code": "ctx->r[1] = ctx->r[1] - 0x00000001; ctx->flag_z = (ctx->r[1] == 0);"
+        },
+        {
+          "pc": 134218012,
+          "op": "COND_BRANCH",
+          "target": 134217996,
+          "fallthrough": 134218016,
+          "c_code": "if (!ctx->flag_z) return 0x0800010C;\n    else return 0x08000120;"
+        }
+      ],
+      "c_code": "/* Basic Block 0x0800010C - 0x0800011C */\nuint32_t bb_0800010C(ArmCpuContext* ctx) {\n    (void)ctx;\n    mem_write16(ctx, ctx->r[0], (uint16_t)ctx->r[2]);\n    ctx->r[0] = ctx->r[0] + 0x00000002;\n    ctx->r[2] = ctx->r[2] + 0x00000001;\n    ctx->r[1] = ctx->r[1] - 0x00000001; ctx->flag_z = (ctx->r[1] == 0);\n    if (!ctx->flag_z) return 0x0800010C;\n    else return 0x08000120;\n}\n",
+      "successors": [
+        "0x0800010C",
+        "0x08000120"
+      ]
+    },
+    {
+      "vram": "0x08000120",
+      "start_vram": 134218016,
+      "end_vram": 134218016,
+      "func_name": "bb_08000120",
+      "is_entry": false,
+      "is_terminal": true,
+      "is_loop": false,
+      "terminator_type": "BRANCH",
+      "instructions_count": 1,
+      "instructions": [
+        {
+          "pc": 134218016,
+          "op": "BX",
+          "rm": 14,
+          "c_code": "return ctx->r[14]; /* bx r14 */"
+        }
+      ],
+      "c_code": "/* Basic Block 0x08000120 - 0x08000120 */\nuint32_t bb_08000120(ArmCpuContext* ctx) {\n    (void)ctx;\n    return ctx->r[14]; /* bx r14 */\n}\n",
+      "successors": []
+    }
+  ],
+  "edges": [
+    {
+      "source": "bb_08000000",
+      "target": "bb_080000C0",
+      "source_vram": "0x08000000",
+      "target_vram": "0x080000C0",
+      "is_loop": false
+    },
+    {
+      "source": "bb_080000C0",
+      "target": "bb_08000100",
+      "source_vram": "0x080000C0",
+      "target_vram": "0x08000100",
+      "is_loop": false
+    },
+    {
+      "source": "bb_08000100",
+      "target": "bb_0800010C",
+      "source_vram": "0x08000100",
+      "target_vram": "0x0800010C",
+      "is_loop": false
+    },
+    {
+      "source": "bb_08000100",
+      "target": "bb_08000120",
+      "source_vram": "0x08000100",
+      "target_vram": "0x08000120",
+      "is_loop": false
+    },
+    {
+      "source": "bb_0800010C",
+      "target": "bb_0800010C",
+      "source_vram": "0x0800010C",
+      "target_vram": "0x0800010C",
+      "is_loop": true
+    },
+    {
+      "source": "bb_0800010C",
+      "target": "bb_08000120",
+      "source_vram": "0x0800010C",
+      "target_vram": "0x08000120",
+      "is_loop": false
+    }
+  ],
+  "entropy_slices": [
+    {
+      "index": 0,
+      "start": 0,
+      "end": 64,
+      "entropy": 5.7,
+      "classification": "Code / Logic"
+    },
+    {
+      "index": 1,
+      "start": 64,
+      "end": 128,
+      "entropy": 5.74,
+      "classification": "Code / Logic"
+    },
+    {
+      "index": 2,
+      "start": 128,
+      "end": 192,
+      "entropy": 4.55,
+      "classification": "Code / Logic"
+    },
+    {
+      "index": 3,
+      "start": 192,
+      "end": 256,
+      "entropy": 2.11,
+      "classification": "Code / Logic"
+    },
+    {
+      "index": 4,
+      "start": 256,
+      "end": 320,
+      "entropy": 3.61,
+      "classification": "Code / Logic"
+    },
+    {
+      "index": 5,
+      "start": 320,
+      "end": 384,
+      "entropy": 0.0,
+      "classification": "Padding / Header"
+    },
+    {
+      "index": 6,
+      "start": 384,
+      "end": 448,
+      "entropy": 0.0,
+      "classification": "Padding / Header"
+    },
+    {
+      "index": 7,
+      "start": 448,
+      "end": 512,
+      "entropy": 0.0,
+      "classification": "Padding / Header"
+    },
+    {
+      "index": 8,
+      "start": 512,
+      "end": 576,
+      "entropy": 0.0,
+      "classification": "Padding / Header"
+    },
+    {
+      "index": 9,
+      "start": 576,
+      "end": 640,
+      "entropy": 0.0,
+      "classification": "Padding / Header"
+    },
+    {
+      "index": 10,
+      "start": 640,
+      "end": 704,
+      "entropy": 0.0,
+      "classification": "Padding / Header"
+    },
+    {
+      "index": 11,
+      "start": 704,
+      "end": 768,
+      "entropy": 0.0,
+      "classification": "Padding / Header"
+    },
+    {
+      "index": 12,
+      "start": 768,
+      "end": 832,
+      "entropy": 0.0,
+      "classification": "Padding / Header"
+    },
+    {
+      "index": 13,
+      "start": 832,
+      "end": 896,
+      "entropy": 0.0,
+      "classification": "Padding / Header"
+    },
+    {
+      "index": 14,
+      "start": 896,
+      "end": 960,
+      "entropy": 0.0,
+      "classification": "Padding / Header"
+    },
+    {
+      "index": 15,
+      "start": 960,
+      "end": 1024,
+      "entropy": 0.0,
+      "classification": "Padding / Header"
+    }
+  ]
+}

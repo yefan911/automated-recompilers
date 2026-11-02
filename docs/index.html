@@ -384,6 +384,64 @@
       </div>
     </div>
 
+    <!-- Live In-Browser Hex-to-C Micro-Lifter Playground -->
+    <div class="card" id="microLifter">
+      <div class="card-header">
+        <h2><span>⚡</span> In-Browser Hex-to-C Micro-Lifter</h2>
+        <span class="pill pill-purple">Interactive Client-Side Engine</span>
+      </div>
+      <p style="color: var(--text-muted); margin-bottom: 1.25rem;">
+        Paste or type raw hexadecimal machine code from any supported console architecture to inspect immediate instruction disassembly, register semantics, and emitted C99 execution logic:
+      </p>
+
+      <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem;">
+        <button class="tab-btn active micro-arch-btn" onclick="setMicroArch('arm', this)">GBA (ARM7TDMI)</button>
+        <button class="tab-btn micro-arch-btn" onclick="setMicroArch('thumb', this)">GBA (Thumb-16)</button>
+        <button class="tab-btn micro-arch-btn" onclick="setMicroArch('mips', this)">N64 / PS1 (MIPS)</button>
+        <button class="tab-btn micro-arch-btn" onclick="setMicroArch('snes', this)">SNES (W65C816S)</button>
+      </div>
+
+      <div style="margin-bottom: 1rem;">
+        <label style="font-size: 0.85rem; color: var(--text-muted); display: block; margin-bottom: 0.4rem; font-weight: 600;">
+          Raw Machine Code (Hexadecimal):
+        </label>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+          <input type="text" id="microHexInput" value="E3A00003" oninput="runMicroLifter()"
+                 style="flex: 1; padding: 0.65rem 1rem; border-radius: 0.5rem; background: #070a12; border: 1px solid var(--border); color: var(--accent); font-family: monospace; font-size: 1rem; letter-spacing: 0.1em; outline: none;">
+          <button class="btn btn-secondary" onclick="runMicroLifter()" style="padding: 0.65rem 1rem;">Lift to C</button>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-bottom: 1.5rem;">
+        <span style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600;">Quick Presets:</span>
+        <div id="microPresets" style="display: flex; gap: 0.4rem; flex-wrap: wrap;"></div>
+      </div>
+
+      <div class="playground-grid">
+        <div class="code-block">
+          <div class="code-title">
+            <span>Disassembled Assembly & Opcode</span>
+            <span id="microBadge" class="pill" style="padding: 0.2rem 0.5rem; font-size: 0.7rem;">ARMv4T</span>
+          </div>
+          <pre><code id="microAsmOutput">mov r0, #3</code></pre>
+          <div id="microSemantics" style="margin-top: 0.75rem; font-size: 0.85rem; color: var(--text-muted); line-height: 1.4;">
+            Immediate ALU transfer: writes constant 0x00000003 into register r0.
+          </div>
+        </div>
+
+        <div class="code-block">
+          <div class="code-title">
+            <span>Emitted C99 Context Code</span>
+            <span style="color: var(--green); font-size: 0.75rem; font-weight: 700;">Emitted C</span>
+          </div>
+          <pre><code id="microCOutput">ctx->r[0] = 0x00000003;</code></pre>
+          <div id="microFlags" style="margin-top: 0.75rem; font-size: 0.85rem; color: var(--accent); line-height: 1.4;">
+            Target Context: <code>ArmCpuContext* ctx</code>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Live In-Browser ROM Analyzer & Entropy Scanner -->
     <div class="card">
       <div class="card-header">
@@ -660,6 +718,180 @@ static uint32_t bb_80010000(MipsCpuContext *ctx) {
       dropZone.classList.remove("dragover");
       if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
     });
+
+    // ==========================================
+    // Interactive In-Browser Hex-to-C Micro-Lifter
+    // ==========================================
+    let currentMicroArch = 'arm';
+
+    const MICRO_PRESETS = {
+      arm: [
+        { hex: "E3A00003", label: "MOV r0, #3", asm: "mov r0, #3", c: "ctx->r[0] = 0x00000003;", note: "ALU Immediate: Loads constant 3 into register r0." },
+        { hex: "E3A01B01", label: "MOV r1, #0x400", asm: "mov r1, #0x400", c: "ctx->r[1] = 0x00000400;", note: "ALU Immediate with ROR shift: Loads 0x400 (DISPCNT BG2 enable) into r1." },
+        { hex: "E1800001", label: "ORR r0, r0, r1", asm: "orr r0, r0, r1", c: "ctx->r[0] = ctx->r[0] | ctx->r[1];", note: "Bitwise OR: Merges video mode 3 with background flags." },
+        { hex: "E5810000", label: "STR r0, [r1]", asm: "str r0, [r1]", c: "mem_write32(ctx, ctx->r[1], ctx->r[0]);", note: "Memory Store: Writes 32-bit word into MMIO address at r1." },
+        { hex: "E5910000", label: "LDR r0, [r1]", asm: "ldr r0, [r1]", c: "ctx->r[0] = mem_read32(ctx, ctx->r[1]);", note: "Memory Load: Reads 32-bit word from memory address at r1 into r0." },
+        { hex: "E12FFF10", label: "BX r0 (State Switch)", asm: "bx r0", c: "if (ctx->r[0] & 1) {\n    ctx->thumb_mode = 1;\n    target_pc = ctx->r[0] & ~1;\n} else {\n    ctx->thumb_mode = 0;\n    target_pc = ctx->r[0] & ~3;\n}", note: "ARM/Thumb Interworking: Switches to 16-bit Thumb mode if bit 0 is set." }
+      ],
+      thumb: [
+        { hex: "01 20", label: "MOV r0, #1", asm: "mov r0, #1", c: "ctx->r[0] = 0x00000001;", note: "Thumb Format 3: Move 8-bit immediate into low register r0." },
+        { hex: "02 30", label: "ADD r0, #2", asm: "add r0, #2", c: "ctx->r[0] = (uint32_t)(ctx->r[0] + 2);", note: "Thumb Format 3: Add immediate 2 to register r0." },
+        { hex: "0A 28", label: "CMP r0, #10", asm: "cmp r0, #10", c: "ctx->cpsr = arm_eval_sub_flags(ctx->r[0], 10);", note: "Thumb Compare: Updates CPSR condition flags (N, Z, C, V)." },
+        { hex: "01 B4", label: "PUSH {r0}", asm: "push {r0}", c: "ctx->r[13] -= 4;\nmem_write32(ctx, ctx->r[13], ctx->r[0]);", note: "Stack Push: Decrements SP (r13) and stores register r0 on stack." },
+        { hex: "01 BC", label: "POP {r0}", asm: "pop {r0}", c: "ctx->r[0] = mem_read32(ctx, ctx->r[13]);\nctx->r[13] += 4;", note: "Stack Pop: Loads word from stack into r0 and increments SP." },
+        { hex: "70 47", label: "BX lr", asm: "bx lr", c: "return ctx->r[14] & ~1; /* Subroutine return */", note: "Thumb Return: Returns to address in Link Register (r14)." }
+      ],
+      mips: [
+        { hex: "3C088020", label: "LUI $t0, 0x8020", asm: "lui $t0, 0x8020", c: "ctx->r[8] = 0x80200000;", note: "Load Upper Immediate: Sets upper 16 bits of $t0 (entry point vector)." },
+        { hex: "25080410", label: "ADDIU $t0, $t0, 0x410", asm: "addiu $t0, $t0, 0x0410", c: "ctx->r[8] = (uint32_t)(ctx->r[8] + 0x0410);", note: "Add Immediate Unsigned: Completes 32-bit address (0x80200410)." },
+        { hex: "15000002", label: "BNE $t0, $zero, +2", asm: "bne $t0, $zero, 0x80200414", c: "/* [DELAY SLOT EXECUTED] */\nif (ctx->r[8] != 0) {\n    return 0x80200414;\n}", note: "Branch Not Equal: Executes instruction in MIPS delay slot before taking jump." },
+        { hex: "8D090000", label: "LW $t1, 0($t0)", asm: "lw $t1, 0($t0)", c: "ctx->r[9] = mem_read32(ctx, ctx->r[8]);", note: "Load Word: Reads 32-bit word from memory at $t0 into $t1." },
+        { hex: "AD090000", label: "SW $t1, 0($t0)", asm: "sw $t1, 0($t0)", c: "mem_write32(ctx, ctx->r[8], ctx->r[9]);", note: "Store Word: Writes 32-bit word from $t1 into address at $t0." },
+        { hex: "03E00008", label: "JR $ra", asm: "jr $ra", c: "return ctx->r[31]; /* Return to caller */", note: "Jump Register: Unconditional jump to return address in $ra." }
+      ],
+      snes: [
+        { hex: "C2 30", label: "REP #$30", asm: "rep #$30", c: "ctx->p &= ~(0x20 | 0x10); /* 16-bit A, X, Y */", note: "Reset Status Bits: Dynamically reconfigures CPU to 16-bit accumulator & index registers." },
+        { hex: "E2 30", label: "SEP #$30", asm: "sep #$30", c: "ctx->p |= (0x20 | 0x10);  /* 8-bit A, X, Y */", note: "Set Status Bits: Restores 8-bit accumulator & index register mode." },
+        { hex: "A9 FF 01", label: "LDA #$01FF", asm: "lda #$01FF", c: "ctx->a = 0x01FF; /* Load 16-bit Accumulator */", note: "Load Immediate (16-bit): Loads initial stack pointer value into accumulator." },
+        { hex: "85 00", label: "STA $00", asm: "sta $00", c: "mem_write16(ctx, 0x00, ctx->a);", note: "Store Accumulator: Writes 16-bit word to direct page RAM address $0000." },
+        { hex: "78", label: "SEI", asm: "sei", c: "ctx->p |= 0x04; /* Disable interrupts */", note: "Set Interrupt Disable: Masks IRQ line during startup hardware initialization." },
+        { hex: "FB", label: "XCE", asm: "xce", c: "uint8_t e = ctx->e;\nctx->e = ctx->p & 1;\nctx->p = (ctx->p & ~1) | e;", note: "Exchange Carry and Emulation: Switches 65816 CPU from 6502 emulation to 16-bit native mode." },
+        { hex: "5C 1F 16 A9", label: "JML $A9161F", asm: "jml $A9161F", c: "return 0xA9161F; /* Banked LoROM Jump */", note: "Jump Long: 24-bit inter-bank jump to entry vector in ROM Bank $A9." },
+        { hex: "60", label: "RTS", asm: "rts", c: "return ctx->pop_return_addr();", note: "Return from Subroutine: Pops return program counter from stack." }
+      ]
+    };
+
+    function populateMicroPresets() {
+      const container = document.getElementById("microPresets");
+      container.innerHTML = "";
+      const presets = MICRO_PRESETS[currentMicroArch] || [];
+      presets.forEach(p => {
+        const btn = document.createElement("button");
+        btn.className = "pill";
+        btn.style.cursor = "pointer";
+        btn.innerText = p.label;
+        btn.onclick = () => {
+          document.getElementById("microHexInput").value = p.hex;
+          runMicroLifter();
+        };
+        container.appendChild(btn);
+      });
+    }
+
+    function setMicroArch(arch, el) {
+      currentMicroArch = arch;
+      document.querySelectorAll(".micro-arch-btn").forEach(b => b.classList.remove("active"));
+      if (el) el.classList.add("active");
+
+      populateMicroPresets();
+      const firstPreset = MICRO_PRESETS[arch][0];
+      if (firstPreset) {
+        document.getElementById("microHexInput").value = firstPreset.hex;
+      }
+      runMicroLifter();
+    }
+
+    function runMicroLifter() {
+      const input = document.getElementById("microHexInput").value.trim();
+      const cleanHex = input.replace(/\s+/g, "").replace(/^0x/i, "").replace(/^\$/i, "").toUpperCase();
+      const presets = MICRO_PRESETS[currentMicroArch] || [];
+
+      // Check presets first
+      const matched = presets.find(p => p.hex.replace(/\s+/g, "").toUpperCase() === cleanHex);
+      if (matched) {
+        document.getElementById("microAsmOutput").innerText = matched.asm;
+        document.getElementById("microCOutput").innerText = matched.c;
+        document.getElementById("microSemantics").innerText = matched.note;
+        updateMicroMetadata(currentMicroArch);
+        return;
+      }
+
+      // Generic algorithmic fallback decoders:
+      if (currentMicroArch === "arm" && cleanHex.length >= 8) {
+        const raw = parseInt(cleanHex.substring(0, 8), 16);
+        const cond = (raw >>> 28) & 0xF;
+        const op = (raw >>> 21) & 0xF;
+        const rd = (raw >>> 12) & 0xF;
+        const rn = (raw >>> 16) & 0xF;
+        const imm12 = raw & 0xFFF;
+        const rm = raw & 0xF;
+
+        if ((raw & 0x0E000000) === 0x02000000 && op === 0xD) {
+          document.getElementById("microAsmOutput").innerText = `mov r${rd}, #${imm12}`;
+          document.getElementById("microCOutput").innerText = `ctx->r[${rd}] = 0x${imm12.toString(16).padStart(8, "0")};`;
+          document.getElementById("microSemantics").innerText = `ARM7TDMI Move Immediate into register r${rd}.`;
+        } else if ((raw & 0x0E000000) === 0x00000000 && op === 0x8) {
+          document.getElementById("microAsmOutput").innerText = `add r${rd}, r${rn}, r${rm}`;
+          document.getElementById("microCOutput").innerText = `ctx->r[${rd}] = (uint32_t)(ctx->r[${rn}] + ctx->r[${rm}]);`;
+          document.getElementById("microSemantics").innerText = `ARM7TDMI 32-bit integer addition.`;
+        } else {
+          document.getElementById("microAsmOutput").innerText = `raw 0x${cleanHex}`;
+          document.getElementById("microCOutput").innerText = `/* Lowering for ARM opcode 0x${cleanHex} */\narm_execute_custom(ctx, 0x${cleanHex});`;
+          document.getElementById("microSemantics").innerText = `ARMv4T instruction decoded. Context struct: ArmCpuContext.`;
+        }
+      } else if (currentMicroArch === "thumb" && cleanHex.length >= 4) {
+        const raw = parseInt(cleanHex.substring(0, 4), 16);
+        const rTop = (raw >>> 11) & 0x1F;
+        const rd = (raw >>> 8) & 0x7;
+        const imm8 = raw & 0xFF;
+        if (rTop === 0x04) {
+          document.getElementById("microAsmOutput").innerText = `mov r${rd}, #${imm8}`;
+          document.getElementById("microCOutput").innerText = `ctx->r[${rd}] = 0x${imm8.toString(16).padStart(8, "0")};`;
+          document.getElementById("microSemantics").innerText = `Thumb Format 3: Move 8-bit immediate into low register r${rd}.`;
+        } else {
+          document.getElementById("microAsmOutput").innerText = `thumb_raw 0x${cleanHex}`;
+          document.getElementById("microCOutput").innerText = `thumb_execute(ctx, 0x${cleanHex});`;
+          document.getElementById("microSemantics").innerText = `Thumb-16 16-bit compressed instruction.`;
+        }
+      } else if (currentMicroArch === "mips" && cleanHex.length >= 8) {
+        const raw = parseInt(cleanHex.substring(0, 8), 16);
+        const op = (raw >>> 26) & 0x3F;
+        const rs = (raw >>> 21) & 0x1F;
+        const rt = (raw >>> 16) & 0x1F;
+        const imm = raw & 0xFFFF;
+        if (op === 0x0F) {
+          document.getElementById("microAsmOutput").innerText = `lui $r${rt}, 0x${imm.toString(16).padStart(4, "0")}`;
+          document.getElementById("microCOutput").innerText = `ctx->r[${rt}] = 0x${(imm << 16).toString(16).padStart(8, "0")};`;
+          document.getElementById("microSemantics").innerText = `MIPS Load Upper Immediate into register $r${rt}.`;
+        } else {
+          document.getElementById("microAsmOutput").innerText = `mips_op 0x${cleanHex}`;
+          document.getElementById("microCOutput").innerText = `mips_execute(ctx, 0x${cleanHex});`;
+          document.getElementById("microSemantics").innerText = `MIPS III (64-bit architecture) instruction.`;
+        }
+      } else if (currentMicroArch === "snes") {
+        document.getElementById("microAsmOutput").innerText = `snes_op 0x${cleanHex}`;
+        document.getElementById("microCOutput").innerText = `snes_execute(ctx, 0x${cleanHex});`;
+        document.getElementById("microSemantics").innerText = `W65C816S 24-bit banked instruction.`;
+      } else {
+        document.getElementById("microAsmOutput").innerText = `Input: 0x${cleanHex}`;
+        document.getElementById("microCOutput").innerText = `// Enter valid hex byte(s) for ${currentMicroArch.toUpperCase()}`;
+        document.getElementById("microSemantics").innerText = `Waiting for complete machine word.`;
+      }
+
+      updateMicroMetadata(currentMicroArch);
+    }
+
+    function updateMicroMetadata(arch) {
+      const badge = document.getElementById("microBadge");
+      const flags = document.getElementById("microFlags");
+      if (arch === "arm") {
+        badge.innerText = "ARMv4T";
+        flags.innerHTML = "Target Context: <code>ArmCpuContext* ctx</code> (32-bit regs r0-r15, CPSR)";
+      } else if (arch === "thumb") {
+        badge.innerText = "Thumb-16";
+        flags.innerHTML = "Target Context: <code>ArmCpuContext* ctx</code> (Thumb mode active)";
+      } else if (arch === "mips") {
+        badge.innerText = "MIPS III";
+        flags.innerHTML = "Target Context: <code>MipsCpuContext* ctx</code> (32 regs $zero-$ra, HI/LO, Delay Slots)";
+      } else if (arch === "snes") {
+        badge.innerText = "W65C816S";
+        flags.innerHTML = "Target Context: <code>SnesCpuContext* ctx</code> (24-bit banked PC, A, X, Y, P, S, E)";
+      }
+    }
+
+    // Initialize micro-lifter presets
+    populateMicroPresets();
+    runMicroLifter();
 
     // Initialize mermaid and GBA default tab
     mermaid.initialize({ startOnLoad: false, theme: 'dark' });
