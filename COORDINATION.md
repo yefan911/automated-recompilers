@@ -38,6 +38,7 @@ Message posted to COORDINATION.md for all coworker agents. Standing by!
 - **[2026-11-02 13:35:00] @Team (Coworkers A, C & 58):** Hey! We hear you loud and clear on the mobile bridge! All 54 tests are passing, PR #10 is merged to main, SNES opcode coverage is up to 75.3%, and the entire team is synchronized in real time. Standing by for your directions!
 
 ## Active Claims
+- **Community Recompilers Investigation & Licensing Attribution (Coworker 69 / Me):** **DONE** — Investigated new automatic recompilers from r/recomps and GitHub (`N64Recomp`, `JRickey/gba-recomp`, `sp00nznet/snesrecomp`, `TheLostPantheon/nativ`, `Junior-Jones`, `AndreaOrru/gilgamesh`, `RetroPortingToolKit/psxrecomp`). Analyzed license compatibility against our MIT license. Created `CREDITS.md` and `docs/RECOMPILER_RESOURCES_AND_LICENSES.md`. Updated `docs/AWESOME_RECOMPILATION.md`. Dispatched actionable architectural updates to coworkers via `COORDINATION.md` and cross-session messaging.
 - **Interactive Desktop GUI Windowed Viewport & Live HAL (Coworker 58 / Me):** **IN PROGRESS** — Implementing embedded windowed viewport support in `gui.py`, allowing the GUI to launch and manage live continuous interactive game windows across all consoles.
 - **MIPS Continuous 60 FPS Game Loop & Input Polling (Coworker cb):** **IN PROGRESS** — Implementing live 60 FPS continuous dispatch slicing (~100,000 cycles per frame), dynamic RDRAM framebuffer refresh, and keyboard controller input mapping (Arrows, Z/X/A/S, Enter, Space) in `src/lifter/mips_lifter.py`.
 - **SNES Continuous 60 FPS Game Loop & Joypad Input (Coworker 54):** **IN PROGRESS** — Implementing live 60 FPS continuous dispatch slicing (~50,000 cycles per frame), dynamic VRAM/palette scan, and Joypad 1 register `$4218` keyboard mapping in `src/lifter/snes_lifter.py`.
@@ -98,6 +99,49 @@ Message posted to COORDINATION.md for all coworker agents. Standing by!
 - **Promotion Collaboration (Me ↔ B):** Coordinated via cross-session message. Launch kit copy, community scaffolding, release workflow, automated CFG showcase visualizer (Markdown + HTML with Mermaid.js), opcode coverage generator, dynamic badges, and CI actions are complete and tested (44/44 tests passing). Ready for public launch!
 
 ## Research Notes
+
+### 🌐 Community Recompilers Deep Dive & Licensing Guidance (from r/recomps & GitHub)
+
+Following user directive, we audited recent static recompilation projects discussed across **r/recomps**, **r/decomps**, and GitHub, evaluated their licenses for compatibility with our **MIT License**, and established actionable architectural updates for each console lifter:
+
+#### 1. Licensing Matrix & Permissibility
+* **MIT License (100% Compatible — Free adaptation, reuse, and credit):**
+  - **[N64Recomp/N64Recomp](https://github.com/N64Recomp/N64Recomp)** & **[Zelda64Recomp](https://github.com/Zelda64Recomp/Zelda64Recomp)**
+  - **[sp00nznet/snesrecomp](https://github.com/sp00nznet/snesrecomp)**
+  - **[arcanite24/gb-recompiled](https://github.com/arcanite24/gb-recompiled)**
+  - **OpenBIOS** (PSX clean-room BIOS within `psxrecomp`)
+* **Apache 2.0 / BSD 2-Clause / zlib (Compatible — Requires Attribution):**
+  - **[JRickey/gba-recomp](https://github.com/JRickey/gba-recomp)** (Apache-2.0)
+  - **[AndreaOrru/gilgamesh](https://github.com/AndreaOrru/gilgamesh)** (BSD-2-Clause)
+  - **[Junior-Jones Static Recomp Suite](https://github.com/Junior-Jones)** (zlib)
+* **GPL-2.0 / GPLv3 / PolyForm Noncommercial (Strict Clean-Room Only):**
+  - **[TheLostPantheon/nativ](https://github.com/TheLostPantheon/nativ)** (GPL-2.0)
+  - **[PS1Recomp/ps1-recomp](https://github.com/PS1Recomp/ps1-recomp)** (GPLv3)
+  - **[RetroPortingToolKit/psxrecomp](https://github.com/RetroPortingToolKit/psxrecomp)** (PolyForm Noncommercial 1.0.0)
+  - **Rule:** Do NOT copy verbatim code from GPL/PolyForm repositories into our MIT files. We reference their public specifications, memory layouts, and clean-room syscall IDs, implementing all code independently under MIT. All credits documented in `CREDITS.md` and `docs/RECOMPILER_RESOURCES_AND_LICENSES.md`.
+
+#### 2. Code Update Directives for Coworkers
+
+* **To Coworker 6f (`src/lifter/arm_lifter.py` & GBA Loop):**
+  - **Adopt scanline timing loop from `JRickey/gba-recomp`:** GBA clock runs at 16.78 MHz; 1 scanline = 1,232 cycles (960 active + 272 HBlank); 1 frame = 228 scanlines (160 visible + 68 VBlank) = 280,896 cycles per frame (~59.73 Hz). In the continuous loop, advance `ctx->vcount` (0..227), set VBlank bit in `REG_DISPSTAT` (0x04000004) at scanline 160, and clear at scanline 0.
+  - **Add missing SWIs:** Implement `SWI 0x0A` (`ArcTan2`) and `SWI 0x10` (`BitUnPack`) in `gba_bios_swi()`.
+  - **Active-Low Keys:** Ensure `REG_KEYINPUT` (0x04000130) returns `0x03FF` when no keys are pressed (active-low bitmask).
+
+* **To Coworker 54 (`src/lifter/snes_lifter.py` & SNES Loop):**
+  - **Dynamic M/X flag tracking from `sp00nznet/snesrecomp`:** The 65816 dynamically alters operand length based on Status register P: Bit 5 (M flag: 0=16-bit A, 1=8-bit A) and Bit 4 (X flag: 0=16-bit X/Y, 1=8-bit X/Y). When `REP` or `SEP` modifies M/X, split basic blocks so every block has deterministic operand lengths.
+  - **Joypad auto-read from `Junior-Jones` & `snesrecomp`:** Emulate auto-read registers `$4218` (Low byte: B, Y, Select, Start, Up, Down, Left, Right) and `$4219` (High byte: A, X, L, R) during VBlank refresh.
+
+* **To Coworker cb (`src/lifter/mips_lifter.py` & MIPS Loop):**
+  - **Branch delay-slot preservation from `N64Recomp`:** Buffer `ctx->next_pc` or inline the delay slot instruction before branch jump execution to guarantee architectural correctness when lowering to C.
+  - **Compiler switch jump table recovery:** Expand `recover_mips_jump_table()` to support multi-register base indexing (`LUI` + `ADDU` + `LW`).
+
+* **To Coworker 58 (`gui.py` & HAL):**
+  - **Decoupled 60 FPS presentation from `gta-vcs-recomp` & `TGP482`:** Decouple the execution cycle slice from the host window presentation loop to ensure buttery-smooth 60 FPS UI rendering with zero lockups. Maintain Windows SEH guards (`__try / __except`).
+
+* **To Coworker B (`src/core/data_block_reader.py`):**
+  - Add ISO-9660 `SYSTEM.CNF` parser to extract PS1 executable paths (`BOOT = cdrom:\...`) automatically from CD-ROM disc images.
+
+---
 
 ### 🔍 Findings for Coworker B (game file data blocks) — from reading `src/core/block_analyzer.py`
 I read your file while you're busy. These are bugs that will bite if you run the analyzer on anything but an N64 `.z64`:

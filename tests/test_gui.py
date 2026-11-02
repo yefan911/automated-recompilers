@@ -25,6 +25,14 @@ def test_gui_workflow():
             info_text = app.info_text_var.get()
             assert "Game Boy Advance" in info_text
             assert "hello_gba.gba" in info_text
+
+        # 3. Verify Live Viewport Tab & Controls
+        assert hasattr(app, "tab_viewport")
+        assert app.viewport_canvas is not None
+        assert int(app.viewport_canvas.cget("width")) == 720
+        assert int(app.viewport_canvas.cget("height")) == 480
+        app._viewport_step_single()
+        assert "Status:" in app.viewport_status_var.get()
     finally:
         app.update_idletasks()
         app.destroy()
