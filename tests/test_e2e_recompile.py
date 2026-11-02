@@ -66,3 +66,30 @@ def test_e2e_recompile_cli_blocks():
     assert result.returncode == 0
     assert "STRUCTURAL ROM BLOCK BREAKDOWN" in result.stdout
     assert "CONTROL FLOW GRAPH" in result.stdout
+
+
+def test_e2e_recompile_cli_with_modding_flags():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        test_rom = os.path.join(tmpdir, "mod_test.gba")
+        create_gba_test_rom(test_rom)
+
+        result = subprocess.run(
+            [sys.executable, "recompile.py", test_rom, "--no-build", "--widescreen", "16:9", "--enable-hooks"],
+            capture_output=True,
+            text=True
+        )
+        assert result.returncode == 0
+        assert "[Modding] Injected Hor+ Widescreen" in result.stdout
+        assert "[Modding] Injected native C Hook & Interception API" in result.stdout
+
+        expected_c = os.path.join("build", "mod_test_recompiled.c")
+        assert os.path.isfile(expected_c)
+        with open(expected_c, "r") as f:
+            content = f.read()
+        assert "RECOMP_WIDESCREEN_H" in content
+        assert "RECOMP_HOOKS_H" in content
+
+        # Clean up
+        if os.path.exists(expected_c):
+            os.remove(expected_c)
+

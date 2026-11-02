@@ -21,6 +21,36 @@ from src.lifter.mips_lifter import lift_mips_rom_to_c
 from src.lifter.snes_lifter import lift_snes_rom_to_c
 from src.core.block_analyzer import BlockDataAnalyzer
 from src.core.native_compiler import compile_c_to_exe
+from src.modding.widescreen import WidescreenPatcher, AspectRatio, WidescreenMode
+from src.modding.texture_manager import TextureManager
+from src.modding.hook_manager import HookManager
+
+def apply_modding_enhancements(c_code: str, console: str, widescreen_ratio=None, texture_pack_dir=None, enable_hooks=False) -> str:
+    headers = []
+    if widescreen_ratio:
+        try:
+            native_ratio = AspectRatio.RATIO_3_2 if "Game Boy Advance" in console else AspectRatio.RATIO_4_3
+            target_ratio = AspectRatio.from_string(widescreen_ratio)
+            patcher = WidescreenPatcher(native_ratio=native_ratio, target_ratio=target_ratio)
+            print(f"  [Modding] Injected Hor+ Widescreen ({target_ratio.desc}, FOV {patcher.fov_multiplier:.2f}x, X-Scale {patcher.projection_x_scale:.2f}x)")
+            headers.append(patcher.emit_c_widescreen_shim())
+        except Exception as e:
+            print(f"  [Modding Warning] Could not apply widescreen patch: {e}")
+
+    if texture_pack_dir:
+        tm = TextureManager()
+        loaded = tm.load_texture_pack(texture_pack_dir)
+        print(f"  [Modding] Loaded {loaded} HD replacement textures from '{texture_pack_dir}'")
+        headers.append(tm.emit_c_texture_interceptor())
+
+    if enable_hooks:
+        hm = HookManager()
+        print("  [Modding] Injected native C Hook & Interception API (recomp_hooks.h)")
+        headers.append(hm.emit_c_header())
+
+    if headers:
+        return "\n\n".join(headers) + "\n\n" + c_code
+    return c_code
 
 def main():
     if len(sys.argv) > 1 and sys.argv[1] in ("--gui", "--ui", "-g"):
@@ -37,7 +67,9 @@ def main():
         print("\nCommands:")
         print("    python recompile.py <rom_path>           # Auto-recompile & build native .exe")
         print("    python recompile.py --ui                 # Launch Graphical Desktop Interface")
-        print("    python recompile.py --blocks <rom_path>  # Inspect CFG basic blocks & entropy map\n")
+        print("    python recompile.py --blocks <rom_path>  # Inspect CFG basic blocks & entropy map")
+        print("    python recompile.py <rom_path> --widescreen 16:9    # Apply Hor+ widescreen geometry patch")
+        print("    python recompile.py <rom_path> --load-textures <dir> # Inject HD replacement texture pack\n")
         return
 
     # Check for --blocks flag
@@ -72,6 +104,31 @@ def main():
             except ValueError:
                 pass
 
+    # Modding SDK CLI flags
+    widescreen_ratio = None
+    if "--widescreen" in args:
+        idx = args.index("--widescreen")
+        if idx + 1 < len(args) and not args[idx + 1].startswith("-"):
+            widescreen_ratio = args[idx + 1]
+            args.pop(idx + 1)
+            args.pop(idx)
+        else:
+            widescreen_ratio = "16:9"
+            args.pop(idx)
+
+    texture_pack_dir = None
+    if "--load-textures" in args:
+        idx = args.index("--load-textures")
+        if idx + 1 < len(args):
+            texture_pack_dir = args[idx + 1]
+            args.pop(idx + 1)
+            args.pop(idx)
+
+    enable_hooks = False
+    if "--enable-hooks" in args:
+        enable_hooks = True
+        args.remove("--enable-hooks")
+
     rom_path = args[0]
     info = inspect_file(rom_path)
     if not info:
@@ -97,6 +154,7 @@ def main():
         print("========================================================")
         print(f"Traversing execution paths from entry vector {info.get('entry_point')} (max {max_blocks} blocks)...")
         c_code = lift_rom_to_c(rom_path, entry_point=0x08000000, max_blocks=max_blocks)
+        c_code = apply_modding_enhancements(c_code, console, widescreen_ratio, texture_pack_dir, enable_hooks)
 
         print("\n========================================================")
         print("  [3/4] Native C Code Generation")
@@ -129,6 +187,7 @@ def main():
         ep = int(raw_ep, 16) if isinstance(raw_ep, str) and raw_ep.startswith("0x") else None
         print(f"Traversing execution paths from entry vector {raw_ep} (max {max_blocks} blocks)...")
         c_code = lift_mips_rom_to_c(rom_path, entry_point=ep, max_blocks=max_blocks)
+        c_code = apply_modding_enhancements(c_code, console, widescreen_ratio, texture_pack_dir, enable_hooks)
 
         print("\n========================================================")
         print("  [3/4] Native C Code Generation")
@@ -159,6 +218,7 @@ def main():
         ep = int(raw_ep, 16) if isinstance(raw_ep, str) and raw_ep.startswith("0x") else 0x8000
         print(f"Traversing execution paths from entry vector {raw_ep} (max {max_blocks} blocks)...")
         c_code = lift_snes_rom_to_c(rom_path, entry_point=ep, max_blocks=max_blocks)
+        c_code = apply_modding_enhancements(c_code, console, widescreen_ratio, texture_pack_dir, enable_hooks)
 
         print("\n========================================================")
         print("  [3/4] Native C Code Generation")

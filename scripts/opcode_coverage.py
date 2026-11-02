@@ -56,13 +56,13 @@ ISA_DEFINITIONS = {
         "implemented": [
             "NOP", "SLL", "SRL", "SRA", "JR", "JALR", "ADD", "ADDU", "SUB", "SUBU",
             "AND", "OR", "XOR", "SLT", "SLTU", "J", "JAL", "BEQ", "BNE", "BLEZ",
-            "BGTZ", "ADDI", "ADDIU", "SLTI", "SLTIU", "ANDI", "ORI", "XORI", "LUI",
-            "LB", "LH", "LW", "LBU", "LHU", "SB", "SH", "SW", "DELAY_SLOT"
+            "BGTZ", "BLTZ", "BGEZ", "ADDI", "ADDIU", "SLTI", "SLTIU", "ANDI", "ORI", "XORI", "LUI",
+            "LB", "LH", "LW", "LBU", "LHU", "SB", "SH", "SW", "DELAY_SLOT",
+            "MULT", "MULTU", "DIV", "DIVU", "MFHI", "MFLO", "MTHI", "MTLO", "NOR",
+            "COP0_MFC0", "COP0_MTC0", "GTE_COP2", "LWC2", "SWC2"
         ],
         "planned": [
-            "SLLV", "SRLV", "SRAV", "MULT", "MULTU", "DIV", "DIVU", "MFHI", "MFLO",
-            "MTHI", "MTLO", "NOR", "SYSCALL", "BREAK", "LWL", "LWR", "SWL", "SWR",
-            "COP0_MFC0", "COP0_MTC0", "COP1_FLOAT", "GTE_COP2"
+            "SLLV", "SRLV", "SRAV", "SYSCALL", "BREAK", "LWL", "LWR", "SWL", "SWR", "COP1_FLOAT"
         ]
     },
     "W65C816S": {

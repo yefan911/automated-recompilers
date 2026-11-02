@@ -2,13 +2,13 @@
 
 This document tracks Ahead-Of-Time (AOT) instruction coverage across all supported console architectures in **Automated Game ROM Recompiler**.
 
-> **Overall Core Opcode Coverage:** **79.7%** (192/241 core opcodes implemented)
+> **Overall Core Opcode Coverage:** **84.9%** (208/245 core opcodes implemented)
 
 | Architecture | Target Console | Implemented | Target Baseline | Coverage | Status |
 | :--- | :--- | :---: | :---: | :---: | :---: |
 | **ARM7TDMI (ARMv4T)** | Game Boy Advance (ARM) | 30 | 43 | **69.8%** | 🟡 In Progress |
 | **ARM Thumb-16** | Game Boy Advance (Thumb) | 42 | 47 | **89.4%** | 🟢 Mature |
-| **MIPS I / III** | Nintendo 64 & PlayStation 1 | 38 | 60 | **63.3%** | 🟡 In Progress |
+| **MIPS I / III** | Nintendo 64 & PlayStation 1 | 54 | 64 | **84.4%** | 🟢 Mature |
 | **W65C816S** | Super Nintendo Entertainment System (SNES) | 82 | 91 | **90.1%** | 🟢 Mature |
 
 ---
@@ -46,13 +46,13 @@ This document tracks Ahead-Of-Time (AOT) instruction coverage across all support
 ## 🕹️ MIPS I / III
 **Target Console:** Nintendo 64 & PlayStation 1  
 **Lifter Source:** [`src/lifter/mips_lifter.py`](../src/lifter/mips_lifter.py)  
-**Coverage:** **63.3%** (38 implemented / 22 prioritized upcoming)
+**Coverage:** **84.4%** (54 implemented / 10 prioritized upcoming)
 
 ### ✅ Implemented Instructions
-`ADD`, `ADDI`, `ADDIU`, `ADDU`, `AND`, `ANDI`, `BEQ`, `BGTZ`, `BLEZ`, `BNE`, `DELAY_SLOT`, `J`, `JAL`, `JALR`, `JR`, `LB`, `LBU`, `LH`, `LHU`, `LUI`, `LW`, `NOP`, `OR`, `ORI`, `SB`, `SH`, `SLL`, `SLT`, `SLTI`, `SLTIU`, `SLTU`, `SRA`, `SRL`, `SUB`, `SUBU`, `SW`, `XOR`, `XORI`
+`ADD`, `ADDI`, `ADDIU`, `ADDU`, `AND`, `ANDI`, `BEQ`, `BGEZ`, `BGTZ`, `BLEZ`, `BLTZ`, `BNE`, `COP0_MFC0`, `COP0_MTC0`, `DELAY_SLOT`, `DIV`, `DIVU`, `GTE_COP2`, `J`, `JAL`, `JALR`, `JR`, `LB`, `LBU`, `LH`, `LHU`, `LUI`, `LW`, `LWC2`, `MFHI`, `MFLO`, `MTHI`, `MTLO`, `MULT`, `MULTU`, `NOP`, `NOR`, `OR`, `ORI`, `SB`, `SH`, `SLL`, `SLT`, `SLTI`, `SLTIU`, `SLTU`, `SRA`, `SRL`, `SUB`, `SUBU`, `SW`, `SWC2`, `XOR`, `XORI`
 
 ### 🎯 Prioritized Missing Instructions (Community Welcome!)
-`BREAK`, `COP0_MFC0`, `COP0_MTC0`, `COP1_FLOAT`, `DIV`, `DIVU`, `GTE_COP2`, `LWL`, `LWR`, `MFHI`, `MFLO`, `MTHI`, `MTLO`, `MULT`, `MULTU`, `NOR`, `SLLV`, `SRAV`, `SRLV`, `SWL`, `SWR`, `SYSCALL`
+`BREAK`, `COP1_FLOAT`, `LWL`, `LWR`, `SLLV`, `SRAV`, `SRLV`, `SWL`, `SWR`, `SYSCALL`
 
 > 💡 *Want to implement one of these opcodes? Check out our [Instruction Contribution Guide](../CONTRIBUTING.md#adding-a-new-instruction-opcode-walkthrough) and submit a PR using the [New Instruction Template](../.github/ISSUE_TEMPLATE/new_instruction.yml).*
 

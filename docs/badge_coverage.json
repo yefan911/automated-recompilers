@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
   "label": "Opcode Coverage",
-  "message": "79.7% (192/241)",
-  "color": "green"
+  "message": "84.9% (208/245)",
+  "color": "brightgreen"
 }

@@ -191,3 +191,43 @@ def test_arm_lifter_swi():
     assert ops[0]["op"] == "SWI"
     assert "gba_bios_swi(ctx, 0x04)" in ops[0]["c_code"]
     assert ops[1]["op"] == "BX"
+
+
+def test_mips_mult_div_branch_gte():
+    raw_instructions = [
+        (0x00850018, "mult"),
+        (0x00850019, "multu"),
+        (0x0085001A, "div"),
+        (0x0085001B, "divu"),
+        (0x00001010, "mfhi"),
+        (0x00001012, "mflo"),
+        (0x00800011, "mthi"),
+        (0x00800013, "mtlo"),
+        (0x00851027, "nor"),
+        (0x04010005, "bgez"),
+        (0x04000005, "bltz"),
+        (0x18800005, "blez"),
+        (0x1C800005, "bgtz"),
+        (0x28850005, "slti"),
+        (0x2C850005, "sltiu"),
+        (0x38851234, "xori"),
+        (0x40051000, "mfc0"),
+        (0x40851000, "mtc0"),
+        (0x4A000001, "rtps"),
+        (0x4A000030, "rtpt"),
+        (0x4A000006, "nclip"),
+        (0x4A00002D, "avsz3"),
+        (0x4A00002E, "avsz4"),
+        (0x4A000028, "sqr"),
+        (0xC8850004, "lwc2"),
+        (0xE8850004, "swc2"),
+    ]
+    data = struct.pack(f">{len(raw_instructions)}I", *[r[0] for r in raw_instructions])
+    lifter = MipsLifter(data, base_vram=0x80000000, is_big_endian=True)
+    for i, (_, mnemonic) in enumerate(raw_instructions):
+        addr = 0x80000000 + i * 4
+        raw = lifter.read_u32(addr)
+        info = lifter.lift_instruction(addr, raw)
+        assert mnemonic in info["asm"].lower()
+        assert info["c"] != ""
+

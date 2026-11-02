@@ -117,10 +117,10 @@
     "MIPS I / III": {
       "console": "Nintendo 64 & PlayStation 1",
       "source_file": "src/lifter/mips_lifter.py",
-      "implemented_count": 38,
-      "planned_count": 22,
-      "total_count": 60,
-      "percentage": 63.3,
+      "implemented_count": 54,
+      "planned_count": 10,
+      "total_count": 64,
+      "percentage": 84.4,
       "implemented_list": [
         "NOP",
         "SLL",
@@ -143,6 +143,8 @@
         "BNE",
         "BLEZ",
         "BGTZ",
+        "BLTZ",
+        "BGEZ",
         "ADDI",
         "ADDIU",
         "SLTI",
@@ -159,12 +161,7 @@
         "SB",
         "SH",
         "SW",
-        "DELAY_SLOT"
-      ],
-      "planned_list": [
-        "SLLV",
-        "SRLV",
-        "SRAV",
+        "DELAY_SLOT",
         "MULT",
         "MULTU",
         "DIV",
@@ -174,16 +171,23 @@
         "MTHI",
         "MTLO",
         "NOR",
+        "COP0_MFC0",
+        "COP0_MTC0",
+        "GTE_COP2",
+        "LWC2",
+        "SWC2"
+      ],
+      "planned_list": [
+        "SLLV",
+        "SRLV",
+        "SRAV",
         "SYSCALL",
         "BREAK",
         "LWL",
         "LWR",
         "SWL",
         "SWR",
-        "COP0_MFC0",
-        "COP0_MTC0",
-        "COP1_FLOAT",
-        "GTE_COP2"
+        "COP1_FLOAT"
       ]
     },
     "W65C816S": {
@@ -291,9 +295,9 @@
     }
   },
   "overall": {
-    "implemented_count": 192,
-    "planned_count": 49,
-    "total_count": 241,
-    "percentage": 79.7
+    "implemented_count": 208,
+    "planned_count": 37,
+    "total_count": 245,
+    "percentage": 84.9
   }
 }

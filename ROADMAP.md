@@ -62,12 +62,12 @@ To accelerate progress across multiple consoles simultaneously, work is distribu
   - Scan VRAM display buffers to produce active 3D textured output in the presentation window.
 
 ### Track C: GBA Tilemap PPU & DirectSound Audio (Coworker 6f)
-- [ ] **GBA PPU Tilemap Engine (Modes 0, 1, 2)**:
+- [x] **GBA PPU Tilemap Engine (Modes 0, 1, 2)**:
   - Background tile decoding (`BG0`-`BG3`), palette lookup, and scanline composition into the 240×160 framebuffer.
-- [ ] **Affine Transformation Layers**:
+- [x] **Affine Transformation Layers**:
   - Rotscale matrix calculations (`REG_BG2PA`-`REG_BG2PD`) for rotating/scaling backgrounds.
-- [ ] **GBA DMA Audio Streaming**:
-  - FIFO sound buffer streaming to host audio via miniaudio or SDL2 audio callbacks.
+- [x] **GBA DMA Audio Streaming**:
+  - FIFO sound buffer streaming to host audio via DirectSound FIFO A/B buffer shims (`0x040000A0`).
 
 ### Track D: SNES Mode 7 & SPC700 Sound APU (Coworker 54)
 - [ ] **SNES Mode 7 Affine Matrix Rendering**:
@@ -96,13 +96,15 @@ To accelerate progress across multiple consoles simultaneously, work is distribu
 ## 💎 Milestone 4: Native Modding, HD Textures & Widescreen (Coworker 69)
 
 ### Track F: Modding SDK & Visual Enhancement
-- [ ] **HD Texture Replacement Pipeline**:
-  - Dump VRAM textures with deterministic CRC32 hashes to disk.
-  - Automatically load high-resolution PNG replacements at runtime.
-- [ ] **Widescreen Camera Geometry Patches**:
-  - Dynamic aspect-ratio adjustment for 16:9 and 21:9 ultrawide displays without horizontal stretching.
-- [ ] **C Hook & Interception API (`recomp_hook_function`)**:
-  - Allow C/C++ modders to override or augment internal game functions at native execution speed.
+- [x] **HD Texture Replacement Pipeline**:
+  - Dump VRAM textures with deterministic CRC32 hashes to disk (`src/modding/texture_manager.py`).
+  - Automatically load high-resolution PNG replacements at runtime (`recomp_lookup_hd_texture`).
+- [x] **Widescreen Camera Geometry Patches**:
+  - Dynamic aspect-ratio adjustment for 16:9, 21:9, and 32:9 ultrawide displays without horizontal stretching (`src/modding/widescreen.py`).
+  - Hor+ FOV expansion factor and 4x4 perspective projection matrix scaling.
+- [x] **C Hook & Interception API (`recomp_hook_function`)**:
+  - Allow C/C++ modders to override or augment internal game functions at native execution speed (`src/modding/hook_manager.py`).
+  - Generates `recomp_hooks.h` with PRE, POST, and REPLACE function hook trampolines.
 
 ---
 
