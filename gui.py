@@ -22,7 +22,15 @@ import subprocess
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from typing import Optional, Dict, Any, List
-from PIL import Image, ImageTk, ImageDraw
+
+try:
+    from PIL import Image, ImageTk, ImageDraw
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
+    Image = None
+    ImageTk = None
+    ImageDraw = None
 
 # Ensure project root is in sys.path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -595,6 +603,8 @@ class RecompilerGUI(tk.Tk):
         self._render_initial_viewport()
 
     def _render_initial_viewport(self):
+        if not HAS_PIL or Image is None or ImageTk is None:
+            return
         w, h = 720, 480
         img = Image.new("RGB", (w, h), (15, 20, 32))
         draw = ImageDraw.Draw(img)
@@ -653,6 +663,8 @@ class RecompilerGUI(tk.Tk):
         self.after(delay, self._viewport_tick)
 
     def _render_viewport_frame(self):
+        if not HAS_PIL or Image is None or ImageTk is None:
+            return
         w, h = 720, 480
         img = Image.new("RGB", (w, h), (10, 10, 20))
         draw = ImageDraw.Draw(img)
