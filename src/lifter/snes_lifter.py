@@ -225,6 +225,22 @@ class SnesLifter:
             return {"pc": instr_pc, "op": "LDY_IMM", "c_code": c}, next_pc
 
         # 5. STX / STY
+        elif opcode == 0x86:  # STX Direct Page
+            zp = get_zp8()
+            if x_flag:
+                c = f"snes_write8(ctx, (ctx->dp + 0x{zp:02X}) & 0xFFFF, (uint8_t)ctx->x);"
+            else:
+                c = f"snes_write16(ctx, (ctx->dp + 0x{zp:02X}) & 0xFFFF, ctx->x);"
+            return {"pc": instr_pc, "op": "STX_ZP", "c_code": c}, next_pc
+
+        elif opcode == 0x84:  # STY Direct Page
+            zp = get_zp8()
+            if x_flag:
+                c = f"snes_write8(ctx, (ctx->dp + 0x{zp:02X}) & 0xFFFF, (uint8_t)ctx->y);"
+            else:
+                c = f"snes_write16(ctx, (ctx->dp + 0x{zp:02X}) & 0xFFFF, ctx->y);"
+            return {"pc": instr_pc, "op": "STY_ZP", "c_code": c}, next_pc
+
         elif opcode == 0x8E:  # STX Absolute
             addr = get_abs16()
             if x_flag:
