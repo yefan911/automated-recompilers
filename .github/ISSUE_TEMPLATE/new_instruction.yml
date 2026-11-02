@@ -1,0 +1,43 @@
+name: 🧩 New Instruction / Opcode Request
+description: Request or propose support for an unhandled machine instruction / opcode
+title: "[Opcode]: <ISA> <Instruction Name> (e.g. [Opcode]: MIPS LWL / LWR)"
+labels: ["enhancement", "lifter", "good first issue"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping expand instruction coverage! Please describe the instruction and its target architecture below.
+  - type: dropdown
+    id: architecture
+    attributes:
+      label: Target Architecture
+      description: Which processor ISA does this instruction belong to?
+      options:
+        - "ARM7TDMI (32-bit ARM)"
+        - "ARM Thumb (16-bit)"
+        - "MIPS I / III (N64 / PS1)"
+        - "W65C816S (SNES)"
+        - "Other"
+    validations:
+      required: true
+  - type: input
+    id: instruction
+    attributes:
+      label: Instruction Mnemonic & Opcode
+      description: Example: MIPS `MULT` (0x00000018) or ARM `SMULL`
+      placeholder: e.g. MIPS BLEZ
+    validations:
+      required: true
+  - type: textarea
+    id: semantics
+    attributes:
+      label: Expected Semantics / C Code Behavior
+      description: How should this instruction be translated into native C code?
+      placeholder: e.g. `ctx->r[rd] = ...;`
+    validations:
+      required: false
+  - type: textarea
+    id: test_rom
+    attributes:
+      label: Affected ROM / Context
+      description: Which ROM or test case triggered the unhandled instruction warning?

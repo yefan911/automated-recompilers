@@ -143,9 +143,24 @@ def decode_mips_instruction(raw: int, pc: int) -> Dict[str, Any]:
 class BlockDataAnalyzer:
     def __init__(self, filepath: str):
         self.filepath = filepath
+        self.filename = os.path.basename(filepath)
         with open(filepath, "rb") as f:
             self.data = f.read()
         self.size = len(self.data)
+        self.total_bytes = self.size
+
+        # Console identification & entry point attributes
+        self.is_n64 = self.data[:4] in (b'\x80\x37\x12\x40', b'\x40\x12\x37\x80', b'\x37\x80\x40\x12')
+        self.is_gba = len(self.data) >= 0x14 and self.data[0x04:0x14] == bytes([
+            0x24, 0xFF, 0xAE, 0x51, 0x69, 0x9A, 0xA2, 0x21,
+            0x3D, 0x84, 0x82, 0x0A, 0x84, 0xE4, 0x09, 0xAD
+        ])
+        if self.is_n64 and len(self.data) >= 0x0C:
+            self.entry_vram = struct.unpack(">I", self.data[0x08:0x0C])[0]
+        elif self.is_gba:
+            self.entry_vram = 0x08000000
+        else:
+            self.entry_vram = 0
 
     def print_structural_blocks(self):
         """Displays the major architectural blocks in an N64 ROM."""

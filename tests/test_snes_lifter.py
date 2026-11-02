@@ -125,3 +125,112 @@ def test_lift_snes_rom_to_c(tmp_path):
     assert "bb_008000" in c_code
     assert "snes_write8" in c_code
     assert "recomp_snes_dispatch" in c_code
+
+
+def test_snes_lifter_transfers_and_flags():
+    # TAX ($AA), TAY ($A8), TXA ($8A), TYA ($98), TSX ($BA), TXS ($9A)
+    # CLC ($18), SEC ($38), CLI ($58), SEI ($78), CLD ($D8), SED ($F8), CLV ($B8), RTS ($60)
+    code = bytes([
+        0xAA, 0xA8, 0x8A, 0x98, 0xBA, 0x9A,
+        0x18, 0x38, 0x58, 0x78, 0xD8, 0xF8, 0xB8,
+        0x60
+    ])
+    rom = create_dummy_lorom(code, entry_pc=0x8000)
+    lifter = SnesLifter(rom, is_lorom=True)
+    ir_ops, targets, _ = lifter.lift_block(start_bank=0x00, start_pc=0x8000, start_p=0x30)
+
+    ops = [op["op"] for op in ir_ops]
+    assert "TAX" in ops
+    assert "TAY" in ops
+    assert "TXA" in ops
+    assert "TYA" in ops
+    assert "TSX" in ops
+    assert "TXS" in ops
+    assert "CLC" in ops
+    assert "SEC" in ops
+    assert "CLI" in ops
+    assert "SEI" in ops
+    assert "CLD" in ops
+    assert "SED" in ops
+    assert "CLV" in ops
+    assert "RTS" in ops
+
+
+def test_snes_lifter_increments_shifts_bitwise():
+    # INX ($E8), DEX ($CA), INY ($C8), DEY ($88), INC ($1A), DEC ($3A)
+    # ASL ($0A), LSR ($4A), ROL ($2A), ROR ($6A)
+    # AND #$0F ($29 $0F), ORA #$F0 ($09 $F0), EOR #$55 ($49 $55), BIT #$80 ($89 $80)
+    # RTS ($60)
+    code = bytes([
+        0xE8, 0xCA, 0xC8, 0x88, 0x1A, 0x3A,
+        0x0A, 0x4A, 0x2A, 0x6A,
+        0x29, 0x0F,
+        0x09, 0xF0,
+        0x49, 0x55,
+        0x89, 0x80,
+        0x60
+    ])
+    rom = create_dummy_lorom(code, entry_pc=0x8000)
+    lifter = SnesLifter(rom, is_lorom=True)
+    ir_ops, _, _ = lifter.lift_block(start_bank=0x00, start_pc=0x8000, start_p=0x30)
+
+    ops = [op["op"] for op in ir_ops]
+    assert "INX" in ops
+    assert "DEX" in ops
+    assert "INY" in ops
+    assert "DEY" in ops
+    assert "INC" in ops
+    assert "DEC" in ops
+    assert "ASL" in ops
+    assert "LSR" in ops
+    assert "ROL" in ops
+    assert "ROR" in ops
+    assert "AND" in ops
+    assert "ORA" in ops
+    assert "EOR" in ops
+    assert "BIT" in ops
+
+
+def test_snes_lifter_stack_and_brl():
+    # PHX ($DA), PLX ($FA), PHY ($5A), PLY ($7A), PHP ($08), PLP ($28), PEA $1234 ($F4 $34 $12)
+    # BRL +$0004 ($82 $04 $00)
+    code = bytes([
+        0xDA, 0xFA, 0x5A, 0x7A, 0x08, 0x28,
+        0xF4, 0x34, 0x12,
+        0x82, 0x04, 0x00,
+        0xEA, 0xEA, 0xEA, 0xEA,
+        0x60
+    ])
+    rom = create_dummy_lorom(code, entry_pc=0x8000)
+    lifter = SnesLifter(rom, is_lorom=True)
+    ir_ops, targets, _ = lifter.lift_block(start_bank=0x00, start_pc=0x8000, start_p=0x30)
+
+    ops = [op["op"] for op in ir_ops]
+    assert "PHX" in ops
+    assert "PLX" in ops
+    assert "PHY" in ops
+    assert "PLY" in ops
+    assert "PHP" in ops
+    assert "PLP" in ops
+    assert "PEA" in ops
+    assert "BRL" in ops
+    assert len(targets) == 1
+    # BRL target: next_pc (0x8000 + 12 = 0x800C) + 4 = 0x8010
+    assert 0x008010 in targets
+
+
+def test_snes_lifter_index_comparisons():
+    # CPX #$10 ($E0 $10), CPY #$20 ($C0 $20), RTS ($60)
+    code = bytes([
+        0xE0, 0x10,
+        0xC0, 0x20,
+        0x60
+    ])
+    rom = create_dummy_lorom(code, entry_pc=0x8000)
+    lifter = SnesLifter(rom, is_lorom=True)
+    ir_ops, _, _ = lifter.lift_block(start_bank=0x00, start_pc=0x8000, start_p=0x30)
+
+    ops = [op["op"] for op in ir_ops]
+    assert "CPX" in ops
+    assert "CPY" in ops
+

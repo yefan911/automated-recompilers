@@ -41,3 +41,11 @@ roms/snes/*
 roms/test/*
 !roms/test/.gitkeep
 !roms/test/hello_gba.gba
+
+# Private user configuration, tokens, and local notification tools
+.recompiler_notify.json
+*.notify.json
+.private/
+private/
+private_tools/
+

@@ -348,7 +348,18 @@ class SnesLifter:
                 "c_code": f"uint16_t ret_off = snes_read16(ctx, 0x000000 | ctx->sp + 1);\n    uint8_t ret_bank = snes_read8(ctx, 0x000000 | ctx->sp);\n    ctx->sp += 3;\n    return ((ret_bank << 16) | ret_off) + 1; /* rtl */"
             }, next_pc
 
-        # 9. Branch Instructions: BRA ($80), BEQ ($F0), BNE ($D0), BBMI ($30), BBPL ($10), BVC ($50), BVS ($70), BCS ($B0), BCC ($90)
+        # 9. Branch Instructions: BRA ($80), BEQ ($F0), BNE ($D0), BBMI ($30), BBPL ($10), BVC ($50), BVS ($70), BCS ($B0), BCC ($90), BRL ($82)
+        elif opcode == 0x82:  # BRL (Branch Long Relative 16-bit)
+            rel16 = get_abs16()
+            simv = rel16 if rel16 < 0x8000 else rel16 - 0x10000
+            target = (next_pc + simv) & 0xFFFFFF
+            return {
+                "pc": instr_pc,
+                "op": "BRL",
+                "target": target,
+                "c_code": f"return 0x{target:06X}; /* brl 0x{target:06X} */"
+            }, next_pc
+
         elif opcode in (0x80, 0xF0, 0xD0, 0x30, 0x10, 0x50, 0x70, 0xB0, 0x90):
             rel8 = get_imm8()
             # Sign extend 8-bit relative offset
@@ -374,7 +385,198 @@ class SnesLifter:
                 "c_code": cond_c
             }, next_pc
 
-        # 10. Miscellaneous: NOP ($EA), PHA ($48), PLA ($68), PHB ($8B), PLB ($AB)
+        # 10. Register Transfers: TAX, TAY, TXA, TYA, TSX, TXS, TCD, TDC, TCS, TSC
+        elif opcode == 0xAA:  # TAX
+            c = "ctx->x = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;"
+            return {"pc": instr_pc, "op": "TAX", "c_code": c}, next_pc
+
+        elif opcode == 0xA8:  # TAY
+            c = "ctx->y = (ctx->p & 0x10) ? (ctx->a & 0xFF) : ctx->a;"
+            return {"pc": instr_pc, "op": "TAY", "c_code": c}, next_pc
+
+        elif opcode == 0x8A:  # TXA
+            c = "ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (ctx->x & 0xFF)) : ctx->x;"
+            return {"pc": instr_pc, "op": "TXA", "c_code": c}, next_pc
+
+        elif opcode == 0x98:  # TYA
+            c = "ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (ctx->y & 0xFF)) : ctx->y;"
+            return {"pc": instr_pc, "op": "TYA", "c_code": c}, next_pc
+
+        elif opcode == 0xBA:  # TSX
+            c = "ctx->x = (ctx->p & 0x10) ? (ctx->sp & 0xFF) : ctx->sp;"
+            return {"pc": instr_pc, "op": "TSX", "c_code": c}, next_pc
+
+        elif opcode == 0x9A:  # TXS
+            c = "ctx->sp = ctx->x;"
+            return {"pc": instr_pc, "op": "TXS", "c_code": c}, next_pc
+
+        elif opcode == 0x5B:  # TCD (16-bit A to DP)
+            return {"pc": instr_pc, "op": "TCD", "c_code": "ctx->dp = (uint8_t)(ctx->a & 0xFF);"}, next_pc
+
+        elif opcode == 0x7B:  # TDC (DP to 16-bit A)
+            return {"pc": instr_pc, "op": "TDC", "c_code": "ctx->a = (uint16_t)ctx->dp;"}, next_pc
+
+        elif opcode == 0x1B:  # TCS (16-bit A to SP)
+            return {"pc": instr_pc, "op": "TCS", "c_code": "ctx->sp = ctx->a;"}, next_pc
+
+        elif opcode == 0x3B:  # TSC (SP to 16-bit A)
+            return {"pc": instr_pc, "op": "TSC", "c_code": "ctx->a = ctx->sp;"}, next_pc
+
+        elif opcode == 0xFB:  # XCE (Exchange Carry with Emulation)
+            return {"pc": instr_pc, "op": "XCE", "c_code": "/* xce: exchange carry with emulation flag */"}, next_pc
+
+        # 11. Status Flag Modifiers: CLC, SEC, CLI, SEI, CLD, SED, CLV
+        elif opcode == 0x18:  # CLC
+            return {"pc": instr_pc, "op": "CLC", "c_code": "ctx->p &= ~0x01;"}, next_pc
+
+        elif opcode == 0x38:  # SEC
+            return {"pc": instr_pc, "op": "SEC", "c_code": "ctx->p |= 0x01;"}, next_pc
+
+        elif opcode == 0x58:  # CLI
+            return {"pc": instr_pc, "op": "CLI", "c_code": "ctx->p &= ~0x04;"}, next_pc
+
+        elif opcode == 0x78:  # SEI
+            return {"pc": instr_pc, "op": "SEI", "c_code": "ctx->p |= 0x04;"}, next_pc
+
+        elif opcode == 0xD8:  # CLD
+            return {"pc": instr_pc, "op": "CLD", "c_code": "ctx->p &= ~0x08;"}, next_pc
+
+        elif opcode == 0xF8:  # SED
+            return {"pc": instr_pc, "op": "SED", "c_code": "ctx->p |= 0x08;"}, next_pc
+
+        elif opcode == 0xB8:  # CLV
+            return {"pc": instr_pc, "op": "CLV", "c_code": "ctx->p &= ~0x40;"}, next_pc
+
+        # 12. Register Increments & Decrements: INX, DEX, INY, DEY, INC, DEC
+        elif opcode == 0xE8:  # INX
+            c = "ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) + 1) & 0xFF) : ((ctx->x + 1) & 0xFFFF);"
+            return {"pc": instr_pc, "op": "INX", "c_code": c}, next_pc
+
+        elif opcode == 0xCA:  # DEX
+            c = "ctx->x = (ctx->p & 0x10) ? (((ctx->x & 0xFF) - 1) & 0xFF) : ((ctx->x - 1) & 0xFFFF);"
+            return {"pc": instr_pc, "op": "DEX", "c_code": c}, next_pc
+
+        elif opcode == 0xC8:  # INY
+            c = "ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) + 1) & 0xFF) : ((ctx->y + 1) & 0xFFFF);"
+            return {"pc": instr_pc, "op": "INY", "c_code": c}, next_pc
+
+        elif opcode == 0x88:  # DEY
+            c = "ctx->y = (ctx->p & 0x10) ? (((ctx->y & 0xFF) - 1) & 0xFF) : ((ctx->y - 1) & 0xFFFF);"
+            return {"pc": instr_pc, "op": "DEY", "c_code": c}, next_pc
+
+        elif opcode == 0x1A:  # INC Accumulator
+            c = "ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (((ctx->a & 0xFF) + 1) & 0xFF)) : ((ctx->a + 1) & 0xFFFF);"
+            return {"pc": instr_pc, "op": "INC", "c_code": c}, next_pc
+
+        elif opcode == 0x3A:  # DEC Accumulator
+            c = "ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (((ctx->a & 0xFF) - 1) & 0xFF)) : ((ctx->a - 1) & 0xFFFF);"
+            return {"pc": instr_pc, "op": "DEC", "c_code": c}, next_pc
+
+        elif opcode == 0xEE:  # INC Absolute
+            addr = get_abs16()
+            if m_flag:
+                c = f"snes_write8(ctx, (ctx->db << 16) | 0x{addr:04X}, (snes_read8(ctx, (ctx->db << 16) | 0x{addr:04X}) + 1) & 0xFF);"
+            else:
+                c = f"snes_write16(ctx, (ctx->db << 16) | 0x{addr:04X}, snes_read16(ctx, (ctx->db << 16) | 0x{addr:04X}) + 1);"
+            return {"pc": instr_pc, "op": "INC", "addr": addr, "c_code": c}, next_pc
+
+        elif opcode == 0xCE:  # DEC Absolute
+            addr = get_abs16()
+            if m_flag:
+                c = f"snes_write8(ctx, (ctx->db << 16) | 0x{addr:04X}, (snes_read8(ctx, (ctx->db << 16) | 0x{addr:04X}) - 1) & 0xFF);"
+            else:
+                c = f"snes_write16(ctx, (ctx->db << 16) | 0x{addr:04X}, snes_read16(ctx, (ctx->db << 16) | 0x{addr:04X}) - 1);"
+            return {"pc": instr_pc, "op": "DEC", "addr": addr, "c_code": c}, next_pc
+
+        # 13. Bitwise Shifts & Rotates: ASL, LSR, ROL, ROR
+        elif opcode == 0x0A:  # ASL Accumulator
+            c = "ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (((ctx->a & 0xFF) << 1) & 0xFF)) : ((ctx->a << 1) & 0xFFFF);"
+            return {"pc": instr_pc, "op": "ASL", "c_code": c}, next_pc
+
+        elif opcode == 0x4A:  # LSR Accumulator
+            c = "ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | ((ctx->a & 0xFF) >> 1)) : ((ctx->a >> 1) & 0xFFFF);"
+            return {"pc": instr_pc, "op": "LSR", "c_code": c}, next_pc
+
+        elif opcode == 0x2A:  # ROL Accumulator
+            c = "ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | ((((ctx->a & 0xFF) << 1) | (ctx->p & 1)) & 0xFF)) : ((((ctx->a << 1) | (ctx->p & 1)) & 0xFFFF));"
+            return {"pc": instr_pc, "op": "ROL", "c_code": c}, next_pc
+
+        elif opcode == 0x6A:  # ROR Accumulator
+            c = "ctx->a = (ctx->p & 0x20) ? ((ctx->a & 0xFF00) | (((ctx->a & 0xFF) >> 1) | ((ctx->p & 1) << 7))) : (((ctx->a >> 1) | ((ctx->p & 1) << 15)) & 0xFFFF);"
+            return {"pc": instr_pc, "op": "ROR", "c_code": c}, next_pc
+
+        # 14. Logical Operations: AND, ORA, EOR, BIT
+        elif opcode == 0x29:  # AND Immediate
+            val, width = get_imm_m()
+            c = f"ctx->a &= 0x{val:04X};" if width == 2 else f"ctx->a = (ctx->a & 0xFF00) | ((ctx->a & 0x{val:02X}) & 0xFF);"
+            return {"pc": instr_pc, "op": "AND", "c_code": c}, next_pc
+
+        elif opcode == 0x2D:  # AND Absolute
+            addr = get_abs16()
+            if m_flag:
+                c = f"ctx->a = (ctx->a & 0xFF00) | ((ctx->a & snes_read8(ctx, (ctx->db << 16) | 0x{addr:04X})) & 0xFF);"
+            else:
+                c = f"ctx->a &= snes_read16(ctx, (ctx->db << 16) | 0x{addr:04X});"
+            return {"pc": instr_pc, "op": "AND", "c_code": c}, next_pc
+
+        elif opcode == 0x09:  # ORA Immediate
+            val, width = get_imm_m()
+            c = f"ctx->a |= 0x{val:04X};" if width == 2 else f"ctx->a = (ctx->a & 0xFF00) | (((ctx->a & 0xFF) | 0x{val:02X}) & 0xFF);"
+            return {"pc": instr_pc, "op": "ORA", "c_code": c}, next_pc
+
+        elif opcode == 0x0D:  # ORA Absolute
+            addr = get_abs16()
+            if m_flag:
+                c = f"ctx->a = (ctx->a & 0xFF00) | (((ctx->a & 0xFF) | snes_read8(ctx, (ctx->db << 16) | 0x{addr:04X})) & 0xFF);"
+            else:
+                c = f"ctx->a |= snes_read16(ctx, (ctx->db << 16) | 0x{addr:04X});"
+            return {"pc": instr_pc, "op": "ORA", "c_code": c}, next_pc
+
+        elif opcode == 0x49:  # EOR Immediate
+            val, width = get_imm_m()
+            c = f"ctx->a ^= 0x{val:04X};" if width == 2 else f"ctx->a = (ctx->a & 0xFF00) | (((ctx->a & 0xFF) ^ 0x{val:02X}) & 0xFF);"
+            return {"pc": instr_pc, "op": "EOR", "c_code": c}, next_pc
+
+        elif opcode == 0x4D:  # EOR Absolute
+            addr = get_abs16()
+            if m_flag:
+                c = f"ctx->a = (ctx->a & 0xFF00) | (((ctx->a & 0xFF) ^ snes_read8(ctx, (ctx->db << 16) | 0x{addr:04X})) & 0xFF);"
+            else:
+                c = f"ctx->a ^= snes_read16(ctx, (ctx->db << 16) | 0x{addr:04X});"
+            return {"pc": instr_pc, "op": "EOR", "c_code": c}, next_pc
+
+        elif opcode == 0x89:  # BIT Immediate
+            val, width = get_imm_m()
+            c = f"ctx->p = ((ctx->a & 0x{val:04X}) == 0) ? (ctx->p | 0x02) : (ctx->p & ~0x02);" if width == 2 else f"ctx->p = (((ctx->a & 0xFF) & 0x{val:02X}) == 0) ? (ctx->p | 0x02) : (ctx->p & ~0x02);"
+            return {"pc": instr_pc, "op": "BIT", "c_code": c}, next_pc
+
+        elif opcode == 0x2C:  # BIT Absolute
+            addr = get_abs16()
+            c = f"uint16_t v = snes_read16(ctx, (ctx->db << 16) | 0x{addr:04X}); ctx->p = (ctx->p & ~0xC2) | (v & 0xC0) | ((ctx->a & v) == 0 ? 0x02 : 0);"
+            return {"pc": instr_pc, "op": "BIT", "c_code": c}, next_pc
+
+        # 15. Index Comparisons: CPX, CPY
+        elif opcode == 0xE0:  # CPX Immediate
+            val, width = get_imm_x()
+            c = f"ctx->p = ((ctx->x == 0x{val:04X}) ? (ctx->p | 0x02) : (ctx->p & ~0x02));" if width == 2 else f"ctx->p = (((ctx->x & 0xFF) == 0x{val:02X}) ? (ctx->p | 0x02) : (ctx->p & ~0x02));"
+            return {"pc": instr_pc, "op": "CPX", "c_code": c}, next_pc
+
+        elif opcode == 0xEC:  # CPX Absolute
+            addr = get_abs16()
+            c = f"ctx->p = ((ctx->x == snes_read16(ctx, (ctx->db << 16) | 0x{addr:04X})) ? (ctx->p | 0x02) : (ctx->p & ~0x02));"
+            return {"pc": instr_pc, "op": "CPX", "c_code": c}, next_pc
+
+        elif opcode == 0xC0:  # CPY Immediate
+            val, width = get_imm_x()
+            c = f"ctx->p = ((ctx->y == 0x{val:04X}) ? (ctx->p | 0x02) : (ctx->p & ~0x02));" if width == 2 else f"ctx->p = (((ctx->y & 0xFF) == 0x{val:02X}) ? (ctx->p | 0x02) : (ctx->p & ~0x02));"
+            return {"pc": instr_pc, "op": "CPY", "c_code": c}, next_pc
+
+        elif opcode == 0xCC:  # CPY Absolute
+            addr = get_abs16()
+            c = f"ctx->p = ((ctx->y == snes_read16(ctx, (ctx->db << 16) | 0x{addr:04X})) ? (ctx->p | 0x02) : (ctx->p & ~0x02));"
+            return {"pc": instr_pc, "op": "CPY", "c_code": c}, next_pc
+
+        # 16. Stack Operations: PHA ($48), PLA ($68), PHB ($8B), PLB ($AB), PHX ($DA), PLX ($FA), PHY ($5A), PLY ($7A), PHP ($08), PLP ($28), PEA ($F4)
         elif opcode == 0xEA:
             return {"pc": instr_pc, "op": "NOP", "c_code": "/* nop */"}, next_pc
 
@@ -397,6 +599,33 @@ class SnesLifter:
 
         elif opcode == 0xAB:  # PLB
             return {"pc": instr_pc, "op": "PLB", "c_code": "ctx->db = snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1;"}, next_pc
+
+        elif opcode == 0xDA:  # PHX
+            c = "ctx->sp -= (ctx->p & 0x10) ? 1 : 2; if (ctx->p & 0x10) snes_write8(ctx, 0x000000 | ctx->sp, (uint8_t)ctx->x); else snes_write16(ctx, 0x000000 | ctx->sp, ctx->x);"
+            return {"pc": instr_pc, "op": "PHX", "c_code": c}, next_pc
+
+        elif opcode == 0xFA:  # PLX
+            c = "if (ctx->p & 0x10) { ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->x = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }"
+            return {"pc": instr_pc, "op": "PLX", "c_code": c}, next_pc
+
+        elif opcode == 0x5A:  # PHY
+            c = "ctx->sp -= (ctx->p & 0x10) ? 1 : 2; if (ctx->p & 0x10) snes_write8(ctx, 0x000000 | ctx->sp, (uint8_t)ctx->y); else snes_write16(ctx, 0x000000 | ctx->sp, ctx->y);"
+            return {"pc": instr_pc, "op": "PHY", "c_code": c}, next_pc
+
+        elif opcode == 0x7A:  # PLY
+            c = "if (ctx->p & 0x10) { ctx->y = (ctx->y & 0xFF00) | snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1; } else { ctx->y = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; }"
+            return {"pc": instr_pc, "op": "PLY", "c_code": c}, next_pc
+
+        elif opcode == 0x08:  # PHP
+            return {"pc": instr_pc, "op": "PHP", "c_code": "ctx->sp -= 1; snes_write8(ctx, 0x000000 | ctx->sp, ctx->p);"}, next_pc
+
+        elif opcode == 0x28:  # PLP
+            return {"pc": instr_pc, "op": "PLP", "c_code": "ctx->p = snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 1;"}, next_pc
+
+        elif opcode == 0xF4:  # PEA (Push Effective Absolute)
+            val = get_abs16()
+            c = f"ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x{val:04X});"
+            return {"pc": instr_pc, "op": "PEA", "c_code": c}, next_pc
 
         # Fallback for unrecognized opcodes
         return {
@@ -432,7 +661,7 @@ class SnesLifter:
                 p_flags = instr["new_p"]
 
             op = instr["op"]
-            if op in ("JMP", "JML", "RTS", "RTL"):
+            if op in ("JMP", "JML", "RTS", "RTL", "BRL"):
                 if "target" in instr:
                     targets.append(instr["target"])
                 break
@@ -460,6 +689,7 @@ class SnesLifter:
         cfg = ControlFlowGraph(entry_vram)
         worklist = [(entry_bank, entry_pc, 0x30)]  # Default p_flags: M=1, X=1 (8-bit mode)
         visited = set()
+        queued = {entry_vram}
 
         while worklist and len(cfg) < max_blocks:
             bank, pc, p = worklist.pop(0)
@@ -481,7 +711,8 @@ class SnesLifter:
             for target in targets:
                 t_bank = (target >> 16) & 0xFF
                 t_pc = target & 0xFFFF
-                if target not in visited and self.is_valid_address(target):
+                if target not in queued and self.is_valid_address(target):
+                    queued.add(target)
                     worklist.append((t_bank, t_pc, final_p))
 
         return cfg

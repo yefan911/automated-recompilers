@@ -1,0 +1,53 @@
+name: Update Showcase & Opcode Metrics
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "src/lifter/**"
+      - "roms/**"
+      - "scripts/**"
+      - "docs/**"
+  pull_request:
+    paths:
+      - "src/lifter/**"
+      - "scripts/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  build-showcase:
+    name: Generate Showcase & Coverage Metrics
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Generate Opcode Coverage & Badges
+        run: |
+          python scripts/opcode_coverage.py
+
+      - name: Generate Visual CFG Showcase & HTML
+        run: |
+          python scripts/generate_showcase.py
+
+      - name: Upload Showcase Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: showcase-docs
+          path: docs/
