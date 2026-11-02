@@ -1,7 +1,10 @@
 # Automated Game ROM Recompiler
 
+[![Release: v0.1.0-beta](https://img.shields.io/badge/release-v0.1.0--beta-orange.svg)](https://github.com/yefan911/automated-recompilers/releases)
 [![CI](https://github.com/yefan911/automated-recompilers/actions/workflows/ci.yml/badge.svg)](https://github.com/yefan911/automated-recompilers/actions/workflows/ci.yml)
 [![Build Executable](https://github.com/yefan911/automated-recompilers/actions/workflows/build-executable.yml/badge.svg)](https://github.com/yefan911/automated-recompilers/actions/workflows/build-executable.yml)
+[![Opcode Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/yefan911/automated-recompilers/main/docs/badge_coverage.json)](docs/OPCODE_COVERAGE.md)
+[![Consoles](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/yefan911/automated-recompilers/main/docs/badge_consoles.json)](docs/SHOWCASE.md)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Platform: Windows & Linux](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey.svg)](README.md)
@@ -11,6 +14,9 @@ An automated static/hybrid recompilation framework that ingests video game conso
 [**Quick Start**](#quick-start-in-60-seconds) • 
 [**Showcase & CFG**](docs/SHOWCASE.md) • 
 [**Opcode Coverage**](docs/OPCODE_COVERAGE.md) • 
+[**Benchmarks**](docs/BENCHMARKS.md) • 
+[**Contributor Bounties**](docs/CONTRIBUTOR_BOUNTIES.md) • 
+[**Awesome List**](docs/AWESOME_RECOMPILATION.md) • 
 [**Why Static Recompilation?**](#why-static-recompilation) • 
 [**Architecture**](#four-stage-recompilation-pipeline) • 
 [**Roadmap**](ROADMAP.md) • 
@@ -168,10 +174,24 @@ automated_recompilers/
 │   └── runtime/                # Hardware Abstraction Layer (Display, Audio, MMIO)
 │
 ├── build/                      # Generated C sources (.c) and compiled binaries (.exe)
-├── docs/                       # Architecture diagrams, case studies & launch kit
+├── docs/                       # Architecture diagrams, case studies, demos & launch kit
+│   ├── demo/                   # Interactive HD video demo (.webm) & terminal walkthrough (.gif)
+│   ├── index.html              # Interactive web playground & CFG visualizer
+│   ├── showcase.html           # Responsive single-ROM CFG showcase
+│   ├── SHOWCASE.md             # Markdown CFG flowcharts with Mermaid.js
+│   ├── BENCHMARKS.md           # Frame latency, CPU utilization & lifter throughput
+│   ├── OPCODE_COVERAGE.md      # Multi-architecture opcode metrics (ARM, Thumb, MIPS, 65816)
+│   ├── CONTRIBUTOR_BOUNTIES.md # Gamified good-first-issues catalog
+│   ├── AWESOME_RECOMPILATION.md# Curated list of static recompilers and papers
 │   ├── ARCHITECTURE.md         # Framework technical design specification
 │   ├── CASE_STUDIES.md         # Breakdowns of N64Recomp, GBARecomp, PS1Recomp
 │   └── LAUNCH_KIT.md           # Community announcements, blog posts & social threads
+├── scripts/                    # Automation, benchmarking & showcase tools
+│   ├── benchmark_suite.py      # Micro-benchmark harness for instruction lifters
+│   ├── generate_showcase.py    # Automated CFG markdown & HTML showcase generator
+│   ├── opcode_coverage.py      # Opcode coverage tracker & dynamic badge generator
+│   ├── opcode_bounty.py        # Good-first-issue template & test generator
+│   └── record_demo.py          # Playwright HD video & Pillow animated GIF recorder
 ├── gui.py                      # Interactive desktop GUI application
 ├── package_exe.py              # Zero-dependency executable packaging utility
 ├── recompile.py                # Unified CLI entry point

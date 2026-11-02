@@ -3,12 +3,12 @@
 This showcase demonstrates the end-to-end Ahead-of-Time (AOT) static recompilation pipeline, from raw binary ROM analysis to recursive Control Flow Graph (CFG) extraction and standalone native C code generation.
 
 ## 🎮 Verified Test ROM Profile
-- **File:** `C:\Users\parra\automated_recompilers\roms\test\hello_gba.gba`
+- **File:** `roms/test/hello_gba.gba`
 - **Target Console:** Game Boy Advance (GBA) (ARM7TDMI (32-bit ARM + 16-bit Thumb))
 - **Entry Vector:** `0x08000000`
 - **Discovered Basic Blocks:** **5**
 - **Total Lifted Instructions:** **20**
-- **CFG Extraction Latency:** **0.23 ms**
+- **CFG Extraction Latency:** **0.41 ms**
 
 ---
 

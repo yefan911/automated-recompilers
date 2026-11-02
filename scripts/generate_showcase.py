@@ -165,7 +165,7 @@ def generate_markdown_showcase(
         "This showcase demonstrates the end-to-end Ahead-of-Time (AOT) static recompilation pipeline, from raw binary ROM analysis to recursive Control Flow Graph (CFG) extraction and standalone native C code generation.",
         "",
         "## 🎮 Verified Test ROM Profile",
-        f"- **File:** `{meta.get('path', 'roms/test/hello_gba.gba')}`",
+        f"- **File:** `{os.path.relpath(meta.get('path', 'roms/test/hello_gba.gba'), PROJECT_ROOT).replace(os.sep, '/')}`",
         f"- **Target Console:** {meta.get('console', 'Game Boy Advance')} ({meta.get('architecture', 'ARM7TDMI')})",
         f"- **Entry Vector:** `0x{cfg.entry_vram:08X}`",
         f"- **Discovered Basic Blocks:** **{len(cfg.blocks)}**",

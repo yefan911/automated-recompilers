@@ -249,9 +249,11 @@ Star the repo, check out the code, and join us in building the next generation o
 > 🖥️ Native desktop presentation window
 
 **Tweet 4 (Visuals & Verification):**
-> It includes a dark-mode desktop GUI and a 100% legal homebrew GBA test ROM so you can recompile and run your first game in 60 seconds with zero proprietary ROMs required.
+> It includes an interactive desktop GUI and a 100% legal homebrew GBA test ROM so you can recompile and run your first game in 60 seconds with zero proprietary ROMs required.
 > 
-> [Attach screenshot / GIF of GUI running and Win32 window displaying pixels]
+> 📹 Watch the 4-stage pipeline in action:
+> docs/demo/recompiler_terminal_walkthrough.gif
+> docs/demo/recompiler_interactive_demo.webm
 
 **Tweet 5 (Call to Action):**
 > 100% Open Source (MIT):

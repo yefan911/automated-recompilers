@@ -20,7 +20,7 @@ Static recompilation (AOT binary translation) translates foreign machine code in
 
 ## Multi-Console Frameworks
 
-- **[Automated Game ROM Recompiler](https://github.com/yefan911/automated-recompilers)** — Open-source framework that ingests raw ROMs across ARM7TDMI (GBA), MIPS I/III (N64, PS1), and W65C816S (SNES) and automatically builds recursive CFGs and standalone native C executables with a built-in HAL and mobile push alerts.
+- **[Automated Game ROM Recompiler](https://github.com/yefan911/automated-recompilers)** — Open-source framework that ingests raw ROMs across ARM7TDMI (GBA), MIPS I/III (N64, PS1), and W65C816S (SNES) and automatically builds recursive CFGs and standalone native C executables with a built-in Hardware Abstraction Layer (HAL).
 - **[LLVM / McSema](https://github.com/lifting-bits/mcsema)** — Framework for lifting x86/x86-64 machine code to LLVM IR for binary analysis and recompilation.
 - **[Remill](https://github.com/lifting-bits/remill)** — Library for lifting machine code instructions into LLVM bitcode.
 
