@@ -55,7 +55,50 @@ GitHub: https://github.com/yefan911/automated-recompilers
 
 ---
 
-## 2. Reddit Posts
+## 2. Lobste.rs (lobste.rs)
+
+### Submission Title:
+> **Automated static binary translation of console ROMs to standalone C99: CFG discovery, register lowering, and memory bounding**
+
+### URL:
+`https://github.com/yefan911/automated-recompilers`
+
+### Tags:
+`compilers`, `reversing`, `c`
+
+### Submitter Comment:
+```markdown
+We've open-sourced **Automated Game ROM Recompiler**, an Ahead-Of-Time (AOT) static binary translation framework that translates console ROM binaries (GBA ARM7TDMI/Thumb, N64/PS1 MIPS, and SNES 65816) into pure, standalone C99 source files with an integrated Hardware Abstraction Layer (HAL).
+
+Unlike dynamic interpreters or runtime JIT dynamic recompilers, our framework compiles the entire foreign binary Ahead-Of-Time into native host executables (`.exe` or Linux ELF) with zero JIT compilation stalls and native 144Hz+ display capabilities.
+
+### Systems & Compiler Engineering Notes:
+
+1. **Recursive CFG Reconstruction & Memory Safety:**
+   - Naive recursive descent disassemblers quickly encounter state explosion when traversing loops or commercial jump tables. We migrated our worklist scheduling to `collections.deque` with strict visited-block tracking, ensuring $O(1)$ block retrieval and linear queue memory.
+   - When scanning mixed directories containing massive CD tracks (e.g. 302MB PS1 bin/cue images), whole-file reads cause catastrophic RSS spikes. We bounded header detection to 128KB windows and queried sizes via `stat()`, dropping peak directory scanning memory from **301.23 MB down to 0.15 MB (a 2,000x drop)**.
+
+2. **Lowering Foreign Instruction Sets to Clean C99:**
+   - **MIPS Branch Delay Slots:** Lowered by staging delay slot operations and emitting them in exact architectural execution order prior to the branch return trampoline.
+   - **ARM / Thumb Interworking:** Register state transitions (`BX Rm`) are tracked dynamically across block boundaries to decode 32-bit ARM vs 16-bit Thumb instructions.
+   - **SNES 65816 Status Flags:** Accumulator and index register operand widths (8-bit vs 16-bit) are resolved dynamically across `REP` and `SEP` status-altering opcodes.
+
+3. **C Code Generation & Virtual Register Contexts:**
+   - Each discovered basic block lowers to an independent C function (`bb_080000C0(ArmCpuContext* ctx)`).
+   - Global dispatch is handled via a unified jump trampoline (`recomp_dispatch`), with static context structs allocated in BSS rather than stack memory to prevent 1MB stack overflow limits under deep recursion.
+
+4. **Live Visual Proof & Micro-benchmarks:**
+   - We generate live interactive Mermaid.js CFG flowcharts and Shannon entropy maps in [SHOWCASE.md](docs/SHOWCASE.md).
+   - Micro-benchmarks measure instruction throughput across lifters (achieving 4.8M to 9.1M ops/sec in Python-driven lifting).
+
+The codebase is MIT licensed: https://github.com/yefan911/automated-recompilers
+
+We'd love thoughts from compiler developers on static heuristics for resolving compiled C `switch` jump tables (`jr $at` / `ldr pc, [table]`) and ABI parameter recovery.
+```
+
+---
+
+## 3. Reddit Posts
 
 ### Post A: r/emulation
 **Title:**

@@ -441,11 +441,66 @@ def generate_html_showcase(
     return html_content
 
 
+def export_cfg_json(
+    meta: Dict[str, Any],
+    cfg: ControlFlowGraph,
+    entropy_slices: List[Dict[str, Any]],
+    bench_time_ms: float
+) -> Dict[str, Any]:
+    """Serializes the CFG into a clean JSON structure for interactive Web visualizers."""
+    total_insns = sum(len(b.instructions) for b in cfg.blocks.values())
+
+    blocks_data = []
+    for vram, b in sorted(cfg.blocks.items()):
+        is_loop = vram in b.successors
+        blocks_data.append({
+            "vram": f"0x{vram:08X}",
+            "start_vram": vram,
+            "end_vram": b.end_vram,
+            "func_name": b.func_name,
+            "is_entry": (vram == cfg.entry_vram),
+            "is_terminal": b.is_terminal,
+            "is_loop": is_loop,
+            "terminator_type": b.terminator_type,
+            "instructions_count": len(b.instructions),
+            "instructions": b.instructions,
+            "c_code": b.emit_c_function(),
+            "successors": [f"0x{s:08X}" for s in b.successors]
+        })
+
+    edges_data = []
+    for u, v in sorted(cfg.edges):
+        edges_data.append({
+            "source": f"bb_{u:08X}",
+            "target": f"bb_{v:08X}",
+            "source_vram": f"0x{u:08X}",
+            "target_vram": f"0x{v:08X}",
+            "is_loop": (u == v)
+        })
+
+    return {
+        "metadata": {
+            "title": "Automated Game ROM Recompiler CFG Visualizer",
+            "rom_file": os.path.relpath(meta.get("path", "roms/test/hello_gba.gba"), PROJECT_ROOT).replace(os.sep, "/"),
+            "console": meta.get("console", "Game Boy Advance"),
+            "architecture": meta.get("architecture", "ARM7TDMI"),
+            "entry_vector": f"0x{cfg.entry_vram:08X}",
+            "total_blocks": len(cfg.blocks),
+            "total_instructions": total_insns,
+            "lift_time_ms": round(bench_time_ms, 2)
+        },
+        "blocks": blocks_data,
+        "edges": edges_data,
+        "entropy_slices": entropy_slices
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate visual showcase and CFG diagrams for Automated Recompiler")
     parser.add_argument("--rom", default="roms/test/hello_gba.gba", help="Path to ROM file")
     parser.add_argument("--output-md", default="docs/SHOWCASE.md", help="Path for generated Markdown showcase")
     parser.add_argument("--output-html", default="docs/showcase.html", help="Path for generated interactive HTML")
+    parser.add_argument("--output-json", default="docs/data/cfg_hello_gba.json", help="Path for WebCFG JSON payload")
     args = parser.parse_args()
 
     rom_path = args.rom
@@ -467,6 +522,8 @@ def main():
 
     os.makedirs(os.path.dirname(args.output_md), exist_ok=True)
     os.makedirs(os.path.dirname(args.output_html), exist_ok=True)
+    if args.output_json:
+        os.makedirs(os.path.dirname(args.output_json), exist_ok=True)
 
     # 1. Generate SHOWCASE.md
     md_content = generate_markdown_showcase(meta, cfg, entropy_slices, bench_time_ms)
@@ -479,6 +536,14 @@ def main():
     with open(args.output_html, "w", encoding="utf-8") as f:
         f.write(html_content)
     print(f"Generated interactive HTML showcase at: {args.output_html}")
+
+    # 3. Export WebCFG JSON
+    if args.output_json:
+        import json
+        cfg_json_data = export_cfg_json(meta, cfg, entropy_slices, bench_time_ms)
+        with open(args.output_json, "w", encoding="utf-8") as f:
+            json.dump(cfg_json_data, f, indent=2)
+        print(f"Generated WebCFG JSON dataset at: {args.output_json}")
 
 
 if __name__ == "__main__":

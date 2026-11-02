@@ -1,0 +1,44 @@
+name: Opcode Bounty PR Validator
+
+on:
+  pull_request:
+    paths:
+      - "src/lifter/**"
+      - "tests/**"
+      - "scripts/opcode_coverage.py"
+      - "scripts/opcode_bounty.py"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  validate-bounty:
+    name: Validate Opcode Contribution & Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run Complete Test Suite
+        run: |
+          pytest -v
+
+      - name: Check Opcode Coverage & Generate Metrics
+        run: |
+          python scripts/opcode_coverage.py
+          python scripts/opcode_bounty.py
+
+      - name: Verify WebCFG Dataset & Showcase Generation
+        run: |
+          python scripts/generate_showcase.py

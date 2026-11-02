@@ -39,7 +39,10 @@ def test_e2e_recompile_cli_rom_file():
 
         # Clean up generated test output
         if os.path.exists(expected_c):
-            os.remove(expected_c)
+            try:
+                os.remove(expected_c)
+            except OSError:
+                pass
         expected_exe = os.path.join("build", "cli_test.exe")
         if os.path.exists(expected_exe):
             try:
