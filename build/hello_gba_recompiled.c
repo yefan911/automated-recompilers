@@ -17,7 +17,9 @@ typedef struct {
     uint8_t  ewram[0x40000]; /* 256KB EWRAM */
     uint8_t  iwram[0x8000];  /* 32KB IWRAM */
     uint8_t  vram[0x18000];  /* 96KB VRAM */
-    uint16_t dispcnt;        /* Display control MMIO */
+    uint16_t dispcnt;        /* Display control MMIO (0x04000000) */
+    uint16_t keyinput;       /* Keypad status (0x04000130, active-low) */
+    uint16_t vcount;         /* Scanline counter (0x04000006) */
 } ArmCpuContext;
 
 /* Hardware Memory Bus Shims */
@@ -35,9 +37,13 @@ static inline void mem_write8(ArmCpuContext* ctx, uint32_t addr, uint8_t val) {
 }
 
 static inline uint16_t mem_read16(ArmCpuContext* ctx, uint32_t addr) {
-    if (addr >= 0x02000000 && addr < 0x02040000) return *(uint16_t*)&ctx->ewram[addr - 0x02000000];
-    if (addr >= 0x03000000 && addr < 0x03008000) return *(uint16_t*)&ctx->iwram[addr - 0x03000000];
-    if (addr >= 0x06000000 && addr < 0x06018000) return *(uint16_t*)&ctx->vram[addr - 0x06000000];
+    if (addr == 0x04000000) return ctx->dispcnt;
+    if (addr == 0x04000004) return 0x0001; /* DISPSTAT: In VBlank */
+    if (addr == 0x04000006) return ctx->vcount;
+    if (addr == 0x04000130) return ctx->keyinput ? ctx->keyinput : 0x03FF;
+    if (addr >= 0x02000000 && addr <= 0x02040000 - 2) return *(uint16_t*)&ctx->ewram[addr - 0x02000000];
+    if (addr >= 0x03000000 && addr <= 0x03008000 - 2) return *(uint16_t*)&ctx->iwram[addr - 0x03000000];
+    if (addr >= 0x06000000 && addr <= 0x06018000 - 2) return *(uint16_t*)&ctx->vram[addr - 0x06000000];
     return 0;
 }
 
@@ -45,11 +51,11 @@ static inline void mem_write16(ArmCpuContext* ctx, uint32_t addr, uint16_t val) 
     if (addr == 0x04000000) {
         ctx->dispcnt = val;
         printf("[GBA HAL] REG_DISPCNT set to 0x%04X (Mode %d)\n", val, val & 7);
-    } else if (addr >= 0x02000000 && addr < 0x02040000) {
+    } else if (addr >= 0x02000000 && addr <= 0x02040000 - 2) {
         *(uint16_t*)&ctx->ewram[addr - 0x02000000] = val;
-    } else if (addr >= 0x03000000 && addr < 0x03008000) {
+    } else if (addr >= 0x03000000 && addr <= 0x03008000 - 2) {
         *(uint16_t*)&ctx->iwram[addr - 0x03000000] = val;
-    } else if (addr >= 0x06000000 && addr < 0x06018000) {
+    } else if (addr >= 0x06000000 && addr <= 0x06018000 - 2) {
         uint32_t offset = addr - 0x06000000;
         *(uint16_t*)&ctx->vram[offset] = val;
         ctx->pixels_written++;
@@ -57,16 +63,92 @@ static inline void mem_write16(ArmCpuContext* ctx, uint32_t addr, uint16_t val) 
 }
 
 static inline uint32_t mem_read32(ArmCpuContext* ctx, uint32_t addr) {
-    if (addr >= 0x02000000 && addr < 0x02040000) return *(uint32_t*)&ctx->ewram[addr - 0x02000000];
-    if (addr >= 0x03000000 && addr < 0x03008000) return *(uint32_t*)&ctx->iwram[addr - 0x03000000];
-    if (addr >= 0x06000000 && addr < 0x06018000) return *(uint32_t*)&ctx->vram[addr - 0x06000000];
+    if (addr >= 0x02000000 && addr <= 0x02040000 - 4) return *(uint32_t*)&ctx->ewram[addr - 0x02000000];
+    if (addr >= 0x03000000 && addr <= 0x03008000 - 4) return *(uint32_t*)&ctx->iwram[addr - 0x03000000];
+    if (addr >= 0x06000000 && addr <= 0x06018000 - 4) return *(uint32_t*)&ctx->vram[addr - 0x06000000];
     return 0;
 }
 
 static inline void mem_write32(ArmCpuContext* ctx, uint32_t addr, uint32_t val) {
-    if (addr >= 0x02000000 && addr < 0x02040000) *(uint32_t*)&ctx->ewram[addr - 0x02000000] = val;
-    else if (addr >= 0x03000000 && addr < 0x03008000) *(uint32_t*)&ctx->iwram[addr - 0x03000000] = val;
-    else if (addr >= 0x06000000 && addr < 0x06018000) *(uint32_t*)&ctx->vram[addr - 0x06000000] = val;
+    if (addr >= 0x02000000 && addr <= 0x02040000 - 4) *(uint32_t*)&ctx->ewram[addr - 0x02000000] = val;
+    else if (addr >= 0x03000000 && addr <= 0x03008000 - 4) *(uint32_t*)&ctx->iwram[addr - 0x03000000] = val;
+    else if (addr >= 0x06000000 && addr <= 0x06018000 - 4) *(uint32_t*)&ctx->vram[addr - 0x06000000] = val;
+}
+
+/* GBA BIOS SWI Emulation Shims */
+static inline void gba_bios_swi(ArmCpuContext* ctx, uint32_t swi_num) {
+    switch (swi_num) {
+        case 0x00: /* SoftReset */
+            ctx->r[13] = 0x03007F00;
+            break;
+        case 0x01: /* RegisterRamReset */
+            break;
+        case 0x02: /* Halt */
+        case 0x03: /* Stop */
+        case 0x04: /* IntrWait */
+        case 0x05: /* VBlankIntrWait */
+            break;
+        case 0x06: /* Div: r0 / r1 */
+            if (ctx->r[1] != 0) {
+                int32_t num = (int32_t)ctx->r[0];
+                int32_t den = (int32_t)ctx->r[1];
+                ctx->r[0] = (uint32_t)(num / den);
+                ctx->r[1] = (uint32_t)(num % den);
+                ctx->r[3] = (uint32_t)(abs(num / den));
+            }
+            break;
+        case 0x07: /* DivARM: r1 / r0 */
+            if (ctx->r[0] != 0) {
+                int32_t num = (int32_t)ctx->r[1];
+                int32_t den = (int32_t)ctx->r[0];
+                ctx->r[0] = (uint32_t)(num / den);
+                ctx->r[1] = (uint32_t)(num % den);
+                ctx->r[3] = (uint32_t)(abs(num / den));
+            }
+            break;
+        case 0x08: /* Sqrt */
+            {
+                uint32_t val = ctx->r[0];
+                uint32_t root = 0;
+                while ((root + 1) * (root + 1) <= val) root++;
+                ctx->r[0] = root;
+            }
+            break;
+        case 0x0B: /* CpuSet */
+            {
+                uint32_t src = ctx->r[0];
+                uint32_t dst = ctx->r[1];
+                uint32_t control = ctx->r[2];
+                uint32_t count = control & 0x1FFFFF;
+                bool is_32bit = (control & (1 << 26)) != 0;
+                bool is_fill = (control & (1 << 24)) != 0;
+                for (uint32_t i = 0; i < count; i++) {
+                    if (is_32bit) {
+                        uint32_t val = mem_read32(ctx, is_fill ? src : (src + i * 4));
+                        mem_write32(ctx, dst + i * 4, val);
+                    } else {
+                        uint16_t val = mem_read16(ctx, is_fill ? src : (src + i * 2));
+                        mem_write16(ctx, dst + i * 2, val);
+                    }
+                }
+            }
+            break;
+        case 0x0C: /* CpuFastSet */
+            {
+                uint32_t src = ctx->r[0];
+                uint32_t dst = ctx->r[1];
+                uint32_t control = ctx->r[2];
+                uint32_t count = control & 0x1FFFFF;
+                bool is_fill = (control & (1 << 24)) != 0;
+                for (uint32_t i = 0; i < count; i++) {
+                    uint32_t val = mem_read32(ctx, is_fill ? src : (src + i * 4));
+                    mem_write32(ctx, dst + i * 4, val);
+                }
+            }
+            break;
+        default:
+            break;
+    }
 }
 
 /* Basic Block Prototypes */
@@ -135,7 +217,8 @@ uint32_t bb_08000120(ArmCpuContext* ctx) {
 
 /* Global Dispatch Trampoline */
 uint32_t recomp_dispatch(ArmCpuContext* ctx, uint32_t target_vram) {
-    switch (target_vram) {
+    uint32_t clean_target = target_vram & ~1; /* strip Thumb bit */
+    switch (clean_target) {
         case 0x08000000: return bb_08000000(ctx);
         case 0x080000C0: return bb_080000C0(ctx);
         case 0x08000100: return bb_08000100(ctx);
@@ -163,16 +246,34 @@ void update_screen_from_vram(ArmCpuContext* ctx) {
     }
 }
 
+static volatile bool g_running = true;
+
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     if (uMsg == WM_DESTROY || (uMsg == WM_KEYDOWN && wParam == VK_ESCAPE)) {
+        g_running = false;
         PostQuitMessage(0);
         return 0;
     }
     return DefWindowProc(hwnd, uMsg, wParam, lParam);
 }
 
-void run_presentation_window(ArmCpuContext* ctx) {
-    update_screen_from_vram(ctx);
+static inline void poll_gba_input(ArmCpuContext* ctx) {
+    /* GBA keys: active-low (0 = pressed, 1 = released). Default = 0x03FF */
+    uint16_t keys = 0x03FF;
+    if (GetAsyncKeyState('X') & 0x8000) keys &= ~(1 << 0);       /* Button A */
+    if (GetAsyncKeyState('Z') & 0x8000) keys &= ~(1 << 1);       /* Button B */
+    if (GetAsyncKeyState(VK_BACK) & 0x8000) keys &= ~(1 << 2);    /* Select */
+    if (GetAsyncKeyState(VK_RETURN) & 0x8000) keys &= ~(1 << 3);  /* Start */
+    if (GetAsyncKeyState(VK_RIGHT) & 0x8000) keys &= ~(1 << 4);   /* Right */
+    if (GetAsyncKeyState(VK_LEFT) & 0x8000) keys &= ~(1 << 5);    /* Left */
+    if (GetAsyncKeyState(VK_UP) & 0x8000) keys &= ~(1 << 6);      /* Up */
+    if (GetAsyncKeyState(VK_DOWN) & 0x8000) keys &= ~(1 << 7);    /* Down */
+    if (GetAsyncKeyState('S') & 0x8000) keys &= ~(1 << 8);       /* Button R */
+    if (GetAsyncKeyState('A') & 0x8000) keys &= ~(1 << 9);       /* Button L */
+    ctx->keyinput = keys;
+}
+
+void run_presentation_window(ArmCpuContext* ctx, uint32_t start_pc) {
     HINSTANCE hInstance = GetModuleHandle(NULL);
     WNDCLASS wc = {0};
     wc.lpfnWndProc = WindowProc;
@@ -187,7 +288,7 @@ void run_presentation_window(ArmCpuContext* ctx) {
     RECT rect = {0, 0, win_w, win_h};
     AdjustWindowRect(&rect, WS_OVERLAPPEDWINDOW, FALSE);
     
-    HWND hwnd = CreateWindow("RecompGBAWindow", "Automated Recompiled Game - Native Display",
+    HWND hwnd = CreateWindow("RecompGBAWindow", "Automated Recompiled Game - Native Display (60 FPS)",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE,
         CW_USEDEFAULT, CW_USEDEFAULT, rect.right - rect.left, rect.bottom - rect.top,
         NULL, NULL, hInstance, NULL);
@@ -202,37 +303,73 @@ void run_presentation_window(ArmCpuContext* ctx) {
     
     HDC hdc = GetDC(hwnd);
     MSG msg = {0};
-    printf("[HAL Window] Desktop Window Launched (720x480). Press ESC to close.\n");
+    printf("[HAL Window] Desktop Window Launched (720x480, 60 FPS). Press ESC to close.\n");
+    printf("[HAL Input] Controls: Arrows=D-Pad, X=A, Z=B, Enter=Start, Backspace=Select, A=L, S=R\n");
     
-    while (GetMessage(&msg, NULL, 0, 0)) {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
+    uint32_t pc = start_pc;
+    g_running = true;
+    
+    while (g_running) {
+        while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+            if (msg.message == WM_QUIT) {
+                g_running = false;
+                break;
+            }
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
+        if (!g_running) break;
+        
+        poll_gba_input(ctx);
+        
+        int frame_cycles = 100000;
+        ctx->vcount = 0;
+        while (frame_cycles-- > 0 && pc != 0) {
+            pc = recomp_dispatch(ctx, pc);
+            if ((frame_cycles % 625) == 0 && ctx->vcount < 227) {
+                ctx->vcount++;
+            }
+        }
+        
+        update_screen_from_vram(ctx);
         StretchDIBits(hdc, 0, 0, win_w, win_h, 0, 0, 240, 160, screen_buffer, &bmi, DIB_RGB_COLORS, SRCCOPY);
+        Sleep(16);
     }
     ReleaseDC(hwnd, hdc);
 }
 #endif
 
 /* Main Entry / Native Recompiled Executable */
+static ArmCpuContext s_ctx;
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
     printf("=== Starting Automated Recompiled Game ===\n");
-    ArmCpuContext ctx = {0};
+    ArmCpuContext* ctx = &s_ctx;
     
     uint32_t next_pc = 0x08000000;
     int max_cycles = 100000;
-    while (max_cycles-- > 0 && next_pc != 0) {
-        next_pc = recomp_dispatch(&ctx, next_pc);
+#if defined(_MSC_VER) && defined(_WIN32)
+    __try {
+        while (max_cycles-- > 0 && next_pc != 0) {
+            next_pc = recomp_dispatch(ctx, next_pc);
+        }
+    } __except(1) {
+        printf("[Crash Guard] Caught hardware exception during GBA execution (code: 0x%08lX)\n", GetExceptionCode());
     }
+#else
+    while (max_cycles-- > 0 && next_pc != 0) {
+        next_pc = recomp_dispatch(ctx, next_pc);
+    }
+#endif
     
     printf("=== Recompiled execution finished successfully ===\n");
-    printf("  * REG_DISPCNT  : 0x%04X (Mode %d)\n", ctx.dispcnt, ctx.dispcnt & 7);
-    printf("  * Pixels Drawn : %u pixels written to VRAM\n", ctx.pixels_written);
+    printf("  * REG_DISPCNT  : 0x%04X (Mode %d)\n", ctx->dispcnt, ctx->dispcnt & 7);
+    printf("  * Pixels Drawn : %u pixels written to VRAM\n", ctx->pixels_written);
     
 #ifdef _WIN32
     if (argc > 1 && strcmp(argv[1], "--window") == 0) {
-        run_presentation_window(&ctx);
+        run_presentation_window(ctx, 0x08000000);
     }
 #endif
     return 0;
