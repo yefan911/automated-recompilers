@@ -115,6 +115,36 @@ class MipsLifter:
                 c_code = f"ctx->r[{rd}] = (uint32_t)((int32_t)ctx->r[{rt}] >> {shamt});" if rd != 0 else "/* nop: r0 */"
                 return {"vram": vram_addr, "asm": f"sra ${MIPS_REG_NAMES[rd]}, ${MIPS_REG_NAMES[rt]}, {shamt}", "c": c_code}
 
+            elif funct == 0x18:  # MULT
+                return {"vram": vram_addr, "asm": f"mult ${MIPS_REG_NAMES[rs]}, ${MIPS_REG_NAMES[rt]}", "c": f"{{ int64_t prod = (int64_t)(int32_t)ctx->r[{rs}] * (int64_t)(int32_t)ctx->r[{rt}]; ctx->lo = (uint32_t)prod; ctx->hi = (uint32_t)(prod >> 32); }}"}
+
+            elif funct == 0x19:  # MULTU
+                return {"vram": vram_addr, "asm": f"multu ${MIPS_REG_NAMES[rs]}, ${MIPS_REG_NAMES[rt]}", "c": f"{{ uint64_t prod = (uint64_t)ctx->r[{rs}] * (uint64_t)ctx->r[{rt}]; ctx->lo = (uint32_t)prod; ctx->hi = (uint32_t)(prod >> 32); }}"}
+
+            elif funct == 0x1A:  # DIV
+                return {"vram": vram_addr, "asm": f"div ${MIPS_REG_NAMES[rs]}, ${MIPS_REG_NAMES[rt]}", "c": f"if (ctx->r[{rt}] != 0) {{ ctx->lo = (uint32_t)((int32_t)ctx->r[{rs}] / (int32_t)ctx->r[{rt}]); ctx->hi = (uint32_t)((int32_t)ctx->r[{rs}] % (int32_t)ctx->r[{rt}]); }}"}
+
+            elif funct == 0x1B:  # DIVU
+                return {"vram": vram_addr, "asm": f"divu ${MIPS_REG_NAMES[rs]}, ${MIPS_REG_NAMES[rt]}", "c": f"if (ctx->r[{rt}] != 0) {{ ctx->lo = ctx->r[{rs}] / ctx->r[{rt}]; ctx->hi = ctx->r[{rs}] % ctx->r[{rt}]; }}"}
+
+            elif funct == 0x10:  # MFHI
+                c_code = f"ctx->r[{rd}] = ctx->hi;" if rd != 0 else "/* nop: r0 */"
+                return {"vram": vram_addr, "asm": f"mfhi ${MIPS_REG_NAMES[rd]}", "c": c_code}
+
+            elif funct == 0x12:  # MFLO
+                c_code = f"ctx->r[{rd}] = ctx->lo;" if rd != 0 else "/* nop: r0 */"
+                return {"vram": vram_addr, "asm": f"mflo ${MIPS_REG_NAMES[rd]}", "c": c_code}
+
+            elif funct == 0x11:  # MTHI
+                return {"vram": vram_addr, "asm": f"mthi ${MIPS_REG_NAMES[rs]}", "c": f"ctx->hi = ctx->r[{rs}];"}
+
+            elif funct == 0x13:  # MTLO
+                return {"vram": vram_addr, "asm": f"mtlo ${MIPS_REG_NAMES[rs]}", "c": f"ctx->lo = ctx->r[{rs}];"}
+
+            elif funct == 0x27:  # NOR
+                c_code = f"ctx->r[{rd}] = ~(ctx->r[{rs}] | ctx->r[{rt}]);" if rd != 0 else "/* nop: r0 */"
+                return {"vram": vram_addr, "asm": f"nor ${MIPS_REG_NAMES[rd]}, ${MIPS_REG_NAMES[rs]}, ${MIPS_REG_NAMES[rt]}", "c": c_code}
+
         # 2. J (Jump)
         elif op == 0x02:
             target = ((vram_addr + 4) & 0xF0000000) | (target26 << 2)
@@ -210,6 +240,111 @@ class MipsLifter:
         # 15. SB
         elif op == 0x28:
             return {"vram": vram_addr, "asm": f"sb ${MIPS_REG_NAMES[rt]}, {simm}(${MIPS_REG_NAMES[rs]})", "c": f"mips_write8(ctx, ctx->r[{rs}] + ({simm}), (uint8_t)ctx->r[{rt}]);"}
+
+        # 16. REGIMM (BLTZ, BGEZ)
+        elif op == 0x01:
+            target = vram_addr + 4 + (simm << 2)
+            fallthrough = vram_addr + 8
+            is_bgez = (rt == 0x01)
+            cond = f"(int32_t)ctx->r[{rs}] >= 0" if is_bgez else f"(int32_t)ctx->r[{rs}] < 0"
+            mnemonic = "bgez" if is_bgez else "bltz"
+            return {
+                "vram": vram_addr,
+                "asm": f"{mnemonic} ${MIPS_REG_NAMES[rs]}, 0x{target:08X}",
+                "c": f"if ({cond}) return 0x{target:08X};\n    else return 0x{fallthrough:08X};",
+                "is_branch": True,
+                "is_terminal": True,
+                "targets": [target, fallthrough]
+            }
+
+        # 17. BLEZ
+        elif op == 0x06:
+            target = vram_addr + 4 + (simm << 2)
+            fallthrough = vram_addr + 8
+            cond = f"(int32_t)ctx->r[{rs}] <= 0"
+            return {
+                "vram": vram_addr,
+                "asm": f"blez ${MIPS_REG_NAMES[rs]}, 0x{target:08X}",
+                "c": f"if ({cond}) return 0x{target:08X};\n    else return 0x{fallthrough:08X};",
+                "is_branch": True,
+                "is_terminal": True,
+                "targets": [target, fallthrough]
+            }
+
+        # 18. BGTZ
+        elif op == 0x07:
+            target = vram_addr + 4 + (simm << 2)
+            fallthrough = vram_addr + 8
+            cond = f"(int32_t)ctx->r[{rs}] > 0"
+            return {
+                "vram": vram_addr,
+                "asm": f"bgtz ${MIPS_REG_NAMES[rs]}, 0x{target:08X}",
+                "c": f"if ({cond}) return 0x{target:08X};\n    else return 0x{fallthrough:08X};",
+                "is_branch": True,
+                "is_terminal": True,
+                "targets": [target, fallthrough]
+            }
+
+        # 19. SLTI / SLTIU
+        elif op == 0x0A:
+            c_code = f"ctx->r[{rt}] = ((int32_t)ctx->r[{rs}] < {simm}) ? 1 : 0;" if rt != 0 else "/* nop */"
+            return {"vram": vram_addr, "asm": f"slti ${MIPS_REG_NAMES[rt]}, ${MIPS_REG_NAMES[rs]}, {simm}", "c": c_code}
+
+        elif op == 0x0B:
+            c_code = f"ctx->r[{rt}] = (ctx->r[{rs}] < (uint32_t){simm}) ? 1 : 0;" if rt != 0 else "/* nop */"
+            return {"vram": vram_addr, "asm": f"sltiu ${MIPS_REG_NAMES[rt]}, ${MIPS_REG_NAMES[rs]}, {simm}", "c": c_code}
+
+        # 20. XORI
+        elif op == 0x0E:
+            c_code = f"ctx->r[{rt}] = ctx->r[{rs}] ^ 0x{imm:04X};" if rt != 0 else "/* nop */"
+            return {"vram": vram_addr, "asm": f"xori ${MIPS_REG_NAMES[rt]}, ${MIPS_REG_NAMES[rs]}, 0x{imm:04X}", "c": c_code}
+
+        # 21. COP0 (System Control)
+        elif op == 0x10:
+            sub = (raw >> 21) & 0x1F
+            if sub == 0x00:  # MFC0
+                c_code = f"ctx->r[{rt}] = ctx->cop0[{rd}];" if rt != 0 else "/* nop */"
+                return {"vram": vram_addr, "asm": f"mfc0 ${MIPS_REG_NAMES[rt]}, ${rd}", "c": c_code}
+            elif sub == 0x04:  # MTC0
+                return {"vram": vram_addr, "asm": f"mtc0 ${MIPS_REG_NAMES[rt]}, ${rd}", "c": f"ctx->cop0[{rd}] = ctx->r[{rt}];"}
+            return {"vram": vram_addr, "asm": f"cop0 0x{sub:02X}", "c": "/* cop0 */"}
+
+        # 22. COP2 / PS1 GTE (Geometry Transformation Engine)
+        elif op == 0x12:
+            if raw & 0x02000000:  # GTE Command
+                gte_cmd = raw & 0x3F
+                gte_names = {
+                    0x01: ("rtps", "gte_rtps(ctx);"),
+                    0x30: ("rtpt", "gte_rtpt(ctx);"),
+                    0x06: ("nclip", "gte_nclip(ctx);"),
+                    0x2D: ("avsz3", "gte_avsz3(ctx);"),
+                    0x2E: ("avsz4", "gte_avsz4(ctx);"),
+                    0x28: ("sqr", "gte_sqr(ctx);"),
+                    0x10: ("dpcs", "gte_dpcs(ctx);"),
+                    0x11: ("intpl", "gte_intpl(ctx);"),
+                    0x14: ("nccs", "gte_nccs(ctx);"),
+                }
+                name, c_call = gte_names.get(gte_cmd, (f"gte_0x{gte_cmd:02X}", f"/* gte 0x{gte_cmd:02X} */"))
+                return {"vram": vram_addr, "asm": name, "c": c_call}
+            else:
+                sub = (raw >> 21) & 0x1F
+                if sub == 0x00:  # MFC2
+                    c_code = f"ctx->r[{rt}] = ctx->gte_data[{rd}];" if rt != 0 else "/* nop */"
+                    return {"vram": vram_addr, "asm": f"mfc2 ${MIPS_REG_NAMES[rt]}, $c2d{rd}", "c": c_code}
+                elif sub == 0x02:  # CFC2
+                    c_code = f"ctx->r[{rt}] = ctx->gte_ctrl[{rd}];" if rt != 0 else "/* nop */"
+                    return {"vram": vram_addr, "asm": f"cfc2 ${MIPS_REG_NAMES[rt]}, $c2c{rd}", "c": c_code}
+                elif sub == 0x04:  # MTC2
+                    return {"vram": vram_addr, "asm": f"mtc2 ${MIPS_REG_NAMES[rt]}, $c2d{rd}", "c": f"ctx->gte_data[{rd}] = ctx->r[{rt}];"}
+                elif sub == 0x06:  # CTC2
+                    return {"vram": vram_addr, "asm": f"ctc2 ${MIPS_REG_NAMES[rt]}, $c2c{rd}", "c": f"ctx->gte_ctrl[{rd}] = ctx->r[{rt}];"}
+                return {"vram": vram_addr, "asm": f"cop2 0x{sub:02X}", "c": "/* cop2 */"}
+
+        elif op == 0x32:  # LWC2
+            return {"vram": vram_addr, "asm": f"lwc2 $c2d{rt}, {simm}(${MIPS_REG_NAMES[rs]})", "c": f"ctx->gte_data[{rt}] = mips_read32(ctx, ctx->r[{rs}] + ({simm}));"}
+
+        elif op == 0x3A:  # SWC2
+            return {"vram": vram_addr, "asm": f"swc2 $c2d{rt}, {simm}(${MIPS_REG_NAMES[rs]})", "c": f"mips_write32(ctx, ctx->r[{rs}] + ({simm}), ctx->gte_data[{rt}]);"}
 
         return {
             "vram": vram_addr,
@@ -415,10 +550,86 @@ def lift_mips_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blo
         '    uint32_t r[32];         /* $zero, $at, $v0-$v1, $a0-$a3, $t0-$t9, $s0-$s7, $gp, $sp, $fp, $ra */',
         '    uint32_t hi, lo;        /* Mult/Div registers */',
         '    uint32_t pc;            /* Program Counter */',
+        '    uint32_t cop0[32];      /* COP0 system control registers */',
+        '    uint32_t gte_data[32];  /* PS1 GTE Coprocessor 2 Data Registers */',
+        '    uint32_t gte_ctrl[32];  /* PS1 GTE Coprocessor 2 Control Registers */',
         '    uint32_t controller_state; /* Input bitmask: D-Pad, A, B, Start */',
         '    uint32_t frame_count;   /* Continuous 60 FPS frame counter */',
         '    uint8_t  rdram[0x800000]; /* 8MB RDRAM */',
         '} MipsCpuContext;',
+        '',
+        '/* PS1 GTE (Geometry Transformation Engine) Shims */',
+        'static inline void gte_rtps(MipsCpuContext* ctx) {',
+        '    int32_t vx = (int16_t)(ctx->gte_data[0] & 0xFFFF);',
+        '    int32_t vy = (int16_t)(ctx->gte_data[0] >> 16);',
+        '    int32_t vz = (int16_t)(ctx->gte_data[1] & 0xFFFF);',
+        '    int32_t h = (int32_t)(ctx->gte_ctrl[27] & 0xFFFF);',
+        '    if (h == 0) h = 440;',
+        '    int32_t sz = vz > 0 ? vz : 1;',
+        '    ctx->gte_data[12] = (uint32_t)((vx * h) / sz); /* SX2 */',
+        '    ctx->gte_data[13] = (uint32_t)((vy * h) / sz); /* SY2 */',
+        '    ctx->gte_data[19] = (uint32_t)sz;              /* SZ3 */',
+        '}',
+        '',
+        'static inline void gte_rtpt(MipsCpuContext* ctx) {',
+        '    int32_t h = (int32_t)(ctx->gte_ctrl[27] & 0xFFFF);',
+        '    if (h == 0) h = 440;',
+        '    for (int v = 0; v < 3; v++) {',
+        '        int32_t vx = (int16_t)(ctx->gte_data[v * 2] & 0xFFFF);',
+        '        int32_t vy = (int16_t)(ctx->gte_data[v * 2] >> 16);',
+        '        int32_t vz = (int16_t)(ctx->gte_data[v * 2 + 1] & 0xFFFF);',
+        '        int32_t sz = vz > 0 ? vz : 1;',
+        '        ctx->gte_data[12 + v] = (uint32_t)((vx * h) / sz);',
+        '        ctx->gte_data[17 + v] = (uint32_t)sz;',
+        '    }',
+        '}',
+        '',
+        'static inline void gte_nclip(MipsCpuContext* ctx) {',
+        '    int32_t sx0 = (int16_t)(ctx->gte_data[12] & 0xFFFF);',
+        '    int32_t sy0 = (int16_t)(ctx->gte_data[12] >> 16);',
+        '    int32_t sx1 = (int16_t)(ctx->gte_data[13] & 0xFFFF);',
+        '    int32_t sy1 = (int16_t)(ctx->gte_data[13] >> 16);',
+        '    int32_t sx2 = (int16_t)(ctx->gte_data[14] & 0xFFFF);',
+        '    int32_t sy2 = (int16_t)(ctx->gte_data[14] >> 16);',
+        '    int32_t nclip = (sx0 * sy1 + sx1 * sy2 + sx2 * sy0) - (sx0 * sy2 + sx1 * sy0 + sx2 * sy1);',
+        '    ctx->gte_data[24] = (uint32_t)nclip; /* MAC0 */',
+        '}',
+        '',
+        'static inline void gte_avsz3(MipsCpuContext* ctx) {',
+        '    uint32_t sz1 = ctx->gte_data[17];',
+        '    uint32_t sz2 = ctx->gte_data[18];',
+        '    uint32_t sz3 = ctx->gte_data[19];',
+        '    ctx->gte_data[23] = (sz1 + sz2 + sz3) / 3; /* OTZ */',
+        '}',
+        '',
+        'static inline void gte_avsz4(MipsCpuContext* ctx) {',
+        '    uint32_t sz0 = ctx->gte_data[16];',
+        '    uint32_t sz1 = ctx->gte_data[17];',
+        '    uint32_t sz2 = ctx->gte_data[18];',
+        '    uint32_t sz3 = ctx->gte_data[19];',
+        '    ctx->gte_data[23] = (sz0 + sz1 + sz2 + sz3) / 4; /* OTZ */',
+        '}',
+        '',
+        'static inline void gte_sqr(MipsCpuContext* ctx) {',
+        '    int32_t ir1 = (int16_t)ctx->gte_data[9];',
+        '    int32_t ir2 = (int16_t)ctx->gte_data[10];',
+        '    int32_t ir3 = (int16_t)ctx->gte_data[11];',
+        '    ctx->gte_data[24] = (uint32_t)((ir1 * ir1) >> 12);',
+        '    ctx->gte_data[25] = (uint32_t)((ir2 * ir2) >> 12);',
+        '    ctx->gte_data[26] = (uint32_t)((ir3 * ir3) >> 12);',
+        '}',
+        '',
+        'static inline void gte_dpcs(MipsCpuContext* ctx) {',
+        '    ctx->gte_data[20] = ctx->gte_data[6];',
+        '}',
+        '',
+        'static inline void gte_intpl(MipsCpuContext* ctx) {',
+        '    ctx->gte_data[20] = ctx->gte_data[6];',
+        '}',
+        '',
+        'static inline void gte_nccs(MipsCpuContext* ctx) {',
+        '    ctx->gte_data[20] = ctx->gte_data[6];',
+        '}',
         '',
         '/* Hardware Memory Shims */',
         'static inline uint32_t mips_read32(MipsCpuContext* ctx, uint32_t addr) {',
