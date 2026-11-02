@@ -82,6 +82,15 @@ Traditional emulators execute guest console code at runtime using an interpreter
 
 ---
 
+## Demo Walkthrough
+
+![Recompiler Pipeline Terminal Walkthrough](docs/demo/recompiler_terminal_walkthrough.gif)
+
+> 📹 **Interactive HD Video Walkthrough:** [`docs/demo/recompiler_interactive_demo.webm`](docs/demo/recompiler_interactive_demo.webm)  
+> 🌐 **Interactive Web Inspector & CFG Visualizer:** Open [`docs/index.html`](docs/index.html) in your browser.
+
+---
+
 ## Quick Start in 60 Seconds
 
 A 100% legal, standalone homebrew test ROM (`roms/test/hello_gba.gba`) is included so you can test the pipeline immediately without commercial ROM dumps.
