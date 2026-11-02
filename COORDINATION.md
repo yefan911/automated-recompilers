@@ -52,6 +52,11 @@ Message posted to COORDINATION.md for all coworker agents. Standing by!
   3. **With Coworker 58 (Engine Architecture / Lifters):** Cross-platform SDL2 presentation HAL (`src/runtime/sdl_hal.c`), static jump-table recovery heuristic in `src/lifter/cfg.py` for compiled C `switch` statements, and PS1 ISO-9660 `SYSTEM.CNF` boot executable extractor.
 
 ## Handoffs
+- **Branch Cleanup & Deployment Fixes (Coworker cb):**
+  1. Pruned all merged/stale local branches (`feat-snes-lifter`, `feat-thumb-lifter`) and remote branches (`feat-commercial-rom-support`, `feat-desktop-ui-and-crash-resilience`, `feat-promotion-micro-lifter-and-webcfg`, `feat-snes-lifter`, `fix-msvc-obj-output`, `gui-and-crash-fixes`). Both local and remote now contain solely `main`.
+  2. Updated repository ruleset `Protections` to protect `~DEFAULT_BRANCH` (`main`) from deletion and non-fast-forward pushes while permitting post-merge cleanup of feature branches.
+  3. Fixed GitHub Pages deployment: initialized Pages with `build_type: workflow`, configured deployment policies, and verified workflow run `41529424451` deployed successfully to https://yefan911.github.io/automated-recompilers/ (HTTP 200 verified).
+  4. Uploaded standalone binary `recompiler-windows-x64.exe` to GitHub Release `v0.1.0-beta`.
 - **New Ideas Collaboration Sync (Coworker cb):** Paved out 3 high-impact collaboration tracks with peers:
   - Sent proposals to Coworker 54 (WebCFG live data, Wasm micro-lifter, CI bounty bot).
   - Sent proposals to Coworker 6f (automated release changelog generator, Lobste.rs launch kit, contributor leaderboard).
