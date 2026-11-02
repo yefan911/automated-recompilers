@@ -23,6 +23,7 @@ from src.core.block_analyzer import BlockDataAnalyzer
 from src.core.native_compiler import compile_c_to_exe
 from src.lifter.arm_lifter import lift_rom_to_c
 from src.lifter.mips_lifter import lift_mips_rom_to_c
+from src.lifter.snes_lifter import lift_snes_rom_to_c
 
 
 class RecompilerGUI(tk.Tk):
@@ -252,8 +253,21 @@ class RecompilerGUI(tk.Tk):
         self._log("Ready to ingest Game Boy Advance, Nintendo 64, and PS1 ROMs.\n")
 
     def _log(self, text: str):
-        self.console_text.insert("end", text + "\n")
-        self.console_text.see("end")
+        def _append():
+            self.console_text.insert("end", text + "\n")
+            # Prune console log to prevent unbounded memory growth in long sessions
+            try:
+                line_count = int(self.console_text.index("end-1c").split(".")[0])
+                if line_count > 5000:
+                    self.console_text.delete("1.0", "1001.0")
+            except Exception:
+                pass
+            self.console_text.see("end")
+
+        if threading.current_thread() is threading.main_thread():
+            _append()
+        else:
+            self.after(0, _append)
 
     def _clear_console(self):
         self.console_text.delete("1.0", "end")
@@ -264,7 +278,7 @@ class RecompilerGUI(tk.Tk):
         if os.path.exists(rom_dir):
             for root, _, files in os.walk(rom_dir):
                 for f in files:
-                    if f.endswith((".gba", ".z64", ".n64", ".v64", ".bin", ".exe", ".iso")) and not f.startswith("."):
+                    if f.endswith((".gba", ".z64", ".n64", ".v64", ".bin", ".exe", ".iso", ".sfc", ".smc")) and not f.startswith("."):
                         rel_path = os.path.relpath(os.path.join(root, f), ".")
                         discovered.append(rel_path)
 
@@ -407,6 +421,14 @@ class RecompilerGUI(tk.Tk):
                 ep = int(raw_ep, 16) if isinstance(raw_ep, str) and raw_ep.startswith("0x") else None
                 self._log(f"Traversing reachable MIPS blocks from {raw_ep}...")
                 c_code = lift_mips_rom_to_c(rom_path, entry_point=ep, max_blocks=1500)
+            elif "Super Nintendo" in console:
+                self._log("\n========================================================")
+                self._log("  [2/4] Recursive Control Flow Graph Disassembly (SNES)")
+                self._log("========================================================")
+                raw_ep = info.get("entry_point")
+                ep = int(raw_ep, 16) if isinstance(raw_ep, str) and raw_ep.startswith("0x") else 0x8000
+                self._log(f"Traversing reachable SNES blocks from {raw_ep}...")
+                c_code = lift_snes_rom_to_c(rom_path, entry_point=ep, max_blocks=1500)
             else:
                 self._log(f"Console '{console}' lifter is not yet automated.")
                 return
@@ -417,6 +439,7 @@ class RecompilerGUI(tk.Tk):
             with open(out_c_path, "w") as f:
                 f.write(c_code)
             self._log(f"Saved: {out_c_path} ({len(c_code.splitlines())} lines)")
+            del c_code  # Free large source string memory immediately
 
             # Stage 4: Compile to Native Executable
             self._log("\n========================================================")
@@ -455,15 +478,21 @@ class RecompilerGUI(tk.Tk):
             messagebox.showerror("Execution Error", f"Failed to launch executable:\n{e}")
 
     def _set_busy(self, busy: bool):
-        self.is_busy = busy
-        if busy:
-            self.progress_bar.start(10)
-            self.recompile_btn.config(state="disabled")
-            self.blocks_btn.config(state="disabled")
+        def _apply():
+            self.is_busy = busy
+            if busy:
+                self.progress_bar.start(10)
+                self.recompile_btn.config(state="disabled")
+                self.blocks_btn.config(state="disabled")
+            else:
+                self.progress_bar.stop()
+                self.recompile_btn.config(state="normal")
+                self.blocks_btn.config(state="normal")
+
+        if threading.current_thread() is threading.main_thread():
+            _apply()
         else:
-            self.progress_bar.stop()
-            self.recompile_btn.config(state="normal")
-            self.blocks_btn.config(state="normal")
+            self.after(0, _apply)
 
 
 def main():

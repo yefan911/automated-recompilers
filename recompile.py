@@ -127,8 +127,8 @@ def main():
         print("========================================================")
         raw_ep = info.get("entry_point")
         ep = int(raw_ep, 16) if isinstance(raw_ep, str) and raw_ep.startswith("0x") else None
-        print(f"Traversing execution paths from entry vector {raw_ep}...")
-        c_code = lift_mips_rom_to_c(rom_path, entry_point=ep)
+        print(f"Traversing execution paths from entry vector {raw_ep} (max {max_blocks} blocks)...")
+        c_code = lift_mips_rom_to_c(rom_path, entry_point=ep, max_blocks=max_blocks)
 
         print("\n========================================================")
         print("  [3/4] Native C Code Generation")
@@ -157,8 +157,8 @@ def main():
         print("========================================================")
         raw_ep = info.get("entry_point")
         ep = int(raw_ep, 16) if isinstance(raw_ep, str) and raw_ep.startswith("0x") else 0x8000
-        print(f"Traversing execution paths from entry vector {raw_ep}...")
-        c_code = lift_snes_rom_to_c(rom_path, entry_point=ep)
+        print(f"Traversing execution paths from entry vector {raw_ep} (max {max_blocks} blocks)...")
+        c_code = lift_snes_rom_to_c(rom_path, entry_point=ep, max_blocks=max_blocks)
 
         print("\n========================================================")
         print("  [3/4] Native C Code Generation")

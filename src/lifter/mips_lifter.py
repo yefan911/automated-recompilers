@@ -11,6 +11,7 @@ emits native C source code with hardware shims.
 import os
 import sys
 import struct
+from collections import deque
 from typing import List, Dict, Any, Tuple, Optional
 
 # Ensure project root is on sys.path
@@ -285,11 +286,12 @@ class MipsLifter:
 
     def build_cfg(self, entry_vram: int, max_blocks: int = 1500) -> ControlFlowGraph:
         cfg = ControlFlowGraph(entry_vram)
-        worklist = [entry_vram]
+        worklist = deque([entry_vram])
         visited = set()
+        queued = {entry_vram}
 
         while worklist and len(cfg) < max_blocks:
-            vram = worklist.pop(0)
+            vram = worklist.popleft()
             if vram in visited or not self.is_valid_vram(vram):
                 continue
             visited.add(vram)
@@ -305,7 +307,8 @@ class MipsLifter:
             cfg.add_block(block)
 
             for target in targets:
-                if target not in visited and self.is_valid_vram(target):
+                if target not in visited and target not in queued and self.is_valid_vram(target):
+                    queued.add(target)
                     worklist.append(target)
 
         return cfg

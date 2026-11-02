@@ -8,6 +8,7 @@ builds a Control Flow Graph (CFG), and outputs structured C functions.
 import os
 import sys
 import struct
+from collections import deque
 from typing import List, Dict, Any, Tuple, Optional
 
 # Ensure project root is on sys.path
@@ -305,12 +306,13 @@ class ArmLifter:
         and 16-bit Thumb mode when targets have bit 0 set.
         """
         cfg = ControlFlowGraph(entry_vram)
-        worklist = [entry_vram]
+        worklist = deque([entry_vram])
         visited = set()
+        queued = {entry_vram & ~1}
         thumb_lifter = ThumbLifter(self.rom, self.base_vram)
 
         while worklist and len(cfg) < max_blocks:
-            raw_vram = worklist.pop(0)
+            raw_vram = worklist.popleft()
             is_thumb = bool(raw_vram & 1)
             vram = raw_vram & ~1
 
@@ -334,7 +336,8 @@ class ArmLifter:
 
             for target in targets:
                 clean_target = target & ~1
-                if clean_target not in visited and self.is_valid_vram(clean_target):
+                if clean_target not in visited and clean_target not in queued and self.is_valid_vram(clean_target):
+                    queued.add(clean_target)
                     worklist.append(target)
 
         return cfg

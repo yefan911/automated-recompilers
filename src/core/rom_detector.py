@@ -167,9 +167,11 @@ def inspect_file(filepath: str) -> Optional[Dict[str, Any]]:
         print(f"Error: file not found '{filepath}'")
         return None
 
+    file_size = os.path.getsize(filepath)
     with open(filepath, "rb") as f:
-        # Read up to first 2MB or entire file if smaller
-        data = f.read()
+        # Read header region up to 128KB (sufficient for all console header formats)
+        # Prevents loading hundreds of megabytes into RAM on CD/ISO images
+        data = f.read(131072)
 
     detectors = [detect_gba, detect_n64, detect_ps1, detect_nes, detect_snes]
     for detector in detectors:
@@ -177,12 +179,13 @@ def inspect_file(filepath: str) -> Optional[Dict[str, Any]]:
         if info:
             info["filename"] = os.path.basename(filepath)
             info["path"] = os.path.abspath(filepath)
+            info["size_bytes"] = file_size
             return info
 
     return {
         "filename": os.path.basename(filepath),
         "console": "Unknown or Raw Image",
-        "size_bytes": len(data),
+        "size_bytes": file_size,
         "magic_hex": data[:16].hex(' '),
     }
 
