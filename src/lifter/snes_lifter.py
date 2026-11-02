@@ -338,14 +338,14 @@ class SnesLifter:
             return {
                 "pc": instr_pc,
                 "op": "RTS",
-                "c_code": f"uint16_t ret = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2;\n    return ((ctx->pb << 16) | ret) + 1; /* rts */"
+                "c_code": f"{{ uint16_t ret = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; return ((ctx->pb << 16) | ret) + 1; }} /* rts */"
             }, next_pc
 
         elif opcode == 0x6B:  # RTL
             return {
                 "pc": instr_pc,
                 "op": "RTL",
-                "c_code": f"uint16_t ret_off = snes_read16(ctx, 0x000000 | ctx->sp + 1);\n    uint8_t ret_bank = snes_read8(ctx, 0x000000 | ctx->sp);\n    ctx->sp += 3;\n    return ((ret_bank << 16) | ret_off) + 1; /* rtl */"
+                "c_code": f"{{ uint16_t ret_off = snes_read16(ctx, 0x000000 | ctx->sp + 1); uint8_t ret_bank = snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 3; return ((ret_bank << 16) | ret_off) + 1; }} /* rtl */"
             }, next_pc
 
         # 9. Branch Instructions: BRA ($80), BEQ ($F0), BNE ($D0), BBMI ($30), BBPL ($10), BVC ($50), BVS ($70), BCS ($B0), BCC ($90), BRL ($82)
@@ -552,7 +552,7 @@ class SnesLifter:
 
         elif opcode == 0x2C:  # BIT Absolute
             addr = get_abs16()
-            c = f"uint16_t v = snes_read16(ctx, (ctx->db << 16) | 0x{addr:04X}); ctx->p = (ctx->p & ~0xC2) | (v & 0xC0) | ((ctx->a & v) == 0 ? 0x02 : 0);"
+            c = f"{{ uint16_t v = snes_read16(ctx, (ctx->db << 16) | 0x{addr:04X}); ctx->p = (ctx->p & ~0xC2) | (v & 0xC0) | ((ctx->a & v) == 0 ? 0x02 : 0); }}"
             return {"pc": instr_pc, "op": "BIT", "c_code": c}, next_pc
 
         # 15. Index Comparisons: CPX, CPY
@@ -794,8 +794,17 @@ def lift_snes_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blo
         '    snes_write8(ctx, addr24 + 1, (uint8_t)(val >> 8));',
         '}',
         '',
-        '/* Basic Block Prototypes */',
+        '/* Basic Block Prototypes & Trampolines */',
         'uint32_t recomp_snes_dispatch(SnesCpuContext* ctx, uint32_t target_vram);',
+        '',
+        'static inline void recomp_snes_call(SnesCpuContext* ctx, uint32_t target_vram) {',
+        '    uint32_t next = target_vram;',
+        '    int budget = 500000;',
+        '    while (next != 0 && budget-- > 0) {',
+        '        next = recomp_snes_dispatch(ctx, next);',
+        '    }',
+        '}',
+        '',
     ]
 
     for b in cfg.sorted_blocks():
@@ -813,17 +822,8 @@ def lift_snes_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blo
                 c_source.append(f'    {code}')
         c_source.append('    return 0;\n}\n')
 
-    # Emit call trampoline and dispatch
+    # Emit dispatch trampoline
     c_source.extend([
-        'static inline void recomp_snes_call(SnesCpuContext* ctx, uint32_t target_vram) {',
-        '    uint32_t ret_addr = ctx->sp;',
-        '    uint32_t next = target_vram;',
-        '    int budget = 500000;',
-        '    while (next != 0 && budget-- > 0) {',
-        '        next = recomp_snes_dispatch(ctx, next);',
-        '    }',
-        '}',
-        '',
         'uint32_t recomp_snes_dispatch(SnesCpuContext* ctx, uint32_t target_vram) {',
         '    switch (target_vram & 0xFFFFFF) {',
     ])
@@ -836,6 +836,23 @@ def lift_snes_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blo
         '            printf("[SNES Dispatch] Unhandled target 0x%06X\\n", target_vram);',
         '            return 0;',
         '    }',
+        '}\n',
+        '/* Main Entry / Native Recompiled Executable */',
+        'static SnesCpuContext s_snes_ctx;',
+        'int main(int argc, char** argv) {',
+        '    (void)argc;',
+        '    (void)argv;',
+        '    printf("=== Starting Automated Recompiled SNES Game ===\\n");',
+        '    SnesCpuContext* ctx = &s_snes_ctx;',
+        '    ctx->sp = 0x01FF;  /* Initial SNES Stack Pointer */',
+        '    ctx->p  = 0x34;    /* Initial Status Register: M=1, X=1, I=1 */',
+        f'    uint32_t next_pc = 0x{(entry_bank << 16) | (entry_pc & 0xFFFF):06X};',
+        '    int max_steps = 10000;',
+        '    while (max_steps-- > 0 && next_pc != 0) {',
+        '        next_pc = recomp_snes_dispatch(ctx, next_pc);',
+        '    }',
+        '    printf("=== Recompiled execution finished successfully ===\\n");',
+        '    return 0;',
         '}',
     ])
 

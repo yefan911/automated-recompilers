@@ -181,36 +181,6 @@ def main():
                 print(f"    .{os.sep}{out_exe_path}\n")
             else:
                 print("Compilation failed. See compiler output above.")
-    elif "Super Nintendo" in console:
-        print("\n========================================================")
-        print("  [2/4] Recursive Control Flow Graph (CFG) Disassembly (SNES)")
-        print("========================================================")
-        raw_ep = info.get("entry_point")
-        ep = int(raw_ep, 16) if isinstance(raw_ep, str) and raw_ep.startswith("0x") else 0x8000
-        print(f"Traversing execution paths from entry vector {raw_ep}...")
-        c_code = lift_snes_rom_to_c(rom_path, entry_point=ep)
-
-        print("\n========================================================")
-        print("  [3/4] Native C Code Generation")
-        print("========================================================")
-        with open(out_c_path, "w") as f:
-            f.write(c_code)
-        print(f"Emitted recompiled source: {out_c_path}")
-
-        if not no_build:
-            print("\n========================================================")
-            print("  [4/4] Native Executable Build & Link")
-            print("========================================================")
-            success = compile_c_to_exe(out_c_path, out_exe_path)
-            if success:
-                print("\n========================================================")
-                print(f"  RECOMPILATION COMPLETE: {os.path.basename(out_exe_path)}")
-                print("========================================================")
-                print("Your game ROM has been compiled into a standalone native binary!")
-                print(f"\nRun the recompiled game:")
-                print(f"    .{os.sep}{out_exe_path}\n")
-            else:
-                print("Compilation failed. See compiler output above.")
     else:
         print(f"\n[Note] Console '{console}' pipeline:")
         print(f"  * Detected entry point: {info.get('entry_point')}")
