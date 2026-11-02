@@ -58,10 +58,10 @@
     "ARM Thumb-16": {
       "console": "Game Boy Advance (Thumb)",
       "source_file": "src/lifter/thumb_lifter.py",
-      "implemented_count": 24,
-      "planned_count": 13,
-      "total_count": 37,
-      "percentage": 64.9,
+      "implemented_count": 42,
+      "planned_count": 5,
+      "total_count": 47,
+      "percentage": 89.4,
       "implemented_list": [
         "PUSH",
         "POP",
@@ -86,9 +86,7 @@
         "ADD_REG",
         "SUB_REG",
         "THUMB_RAW",
-        "HALT"
-      ],
-      "planned_list": [
+        "HALT",
         "LSL_IMM",
         "LSR_IMM",
         "ASR_IMM",
@@ -101,7 +99,19 @@
         "NEG_REG",
         "MUL_REG",
         "LDMIA",
-        "STMIA"
+        "STMIA",
+        "SWI",
+        "LDR_SP",
+        "STR_SP",
+        "ADD_SP_IMM",
+        "ADD_PC_IMM"
+      ],
+      "planned_list": [
+        "BKPT",
+        "REV",
+        "REV16",
+        "REVSH",
+        "SETEND"
       ]
     },
     "MIPS I / III": {
@@ -281,9 +291,9 @@
     }
   },
   "overall": {
-    "implemented_count": 174,
-    "planned_count": 57,
-    "total_count": 231,
-    "percentage": 75.3
+    "implemented_count": 192,
+    "planned_count": 49,
+    "total_count": 241,
+    "percentage": 79.7
   }
 }

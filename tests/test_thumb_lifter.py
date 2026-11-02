@@ -70,3 +70,41 @@ def test_arm_to_thumb_interworking():
     assert cfg.has_block(0x08000000)
     assert cfg.has_block(0x08000010)
     assert len(cfg) >= 2
+
+
+def test_thumb_shift_and_alu_instructions():
+    # 0x0088: lsl r0, r1, #2
+    # 0x0888: lsr r0, r1, #2
+    # 0x4008: and r0, r1
+    # 0x4048: eor r0, r1
+    # 0x4340: mul r0, r0
+    # 0x4770: bx lr
+    code = struct.pack("<6H", 0x0088, 0x0888, 0x4008, 0x4048, 0x4340, 0x4770)
+    lifter = ThumbLifter(code, base_vram=0x08004000)
+    ops, targets = lifter.lift_block(0x08004000)
+
+    assert len(ops) == 6
+    assert ops[0]["op"] == "LSL_IMM"
+    assert ops[1]["op"] == "LSR_IMM"
+    assert ops[2]["op"] == "AND_REG"
+    assert ops[3]["op"] == "EOR_REG"
+    assert ops[4]["op"] == "MUL_REG"
+    assert ops[5]["op"] == "BX"
+
+
+def test_thumb_swi_and_sp_load_store():
+    # 0x9002: str r0, [sp, #8]
+    # 0x9802: ldr r0, [sp, #8]
+    # 0xDF05: swi 0x05 (VBlankIntrWait)
+    # 0x4770: bx lr
+    code = struct.pack("<4H", 0x9002, 0x9802, 0xDF05, 0x4770)
+    lifter = ThumbLifter(code, base_vram=0x08005000)
+    ops, targets = lifter.lift_block(0x08005000)
+
+    assert len(ops) == 4
+    assert ops[0]["op"] == "STR_SP"
+    assert ops[1]["op"] == "LDR_SP"
+    assert ops[2]["op"] == "SWI"
+    assert "gba_bios_swi(ctx, 0x05)" in ops[2]["c_code"]
+    assert ops[3]["op"] == "BX"
+

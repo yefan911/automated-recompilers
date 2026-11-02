@@ -183,7 +183,16 @@ class ThumbLifter:
                     })
                 break
 
-            # 6. Conditional Branch (Format 16: 0xD000)
+            # 6. Software Interrupt (Format 17: 0xDF00) or Conditional Branch (Format 16: 0xD000)
+            elif (raw & 0xFF00) == 0xDF00:
+                swi_num = raw & 0xFF
+                ir_ops.append({
+                    "pc": instr_pc,
+                    "op": "SWI",
+                    "swi": swi_num,
+                    "c_code": f"gba_bios_swi(ctx, 0x{swi_num:02X}); /* swi 0x{swi_num:02X} */"
+                })
+
             elif (raw & 0xF000) == 0xD000:
                 cond = (raw >> 8) & 0xF
                 if cond < 0xE: # 0xE is undefined in Thumb
@@ -412,16 +421,6 @@ class ThumbLifter:
                     "pc": instr_pc,
                     "op": "LDMIA" if is_load else "STMIA",
                     "c_code": "\n    ".join(lines) if lines else "/* empty ldm/stm */"
-                })
-
-            # 17. Software Interrupt (SWI): Format 17: 0xDF00
-            elif (raw & 0xFF00) == 0xDF00:
-                swi_num = raw & 0xFF
-                ir_ops.append({
-                    "pc": instr_pc,
-                    "op": "SWI",
-                    "swi": swi_num,
-                    "c_code": f"gba_bios_swi(ctx, 0x{swi_num:02X}); /* swi 0x{swi_num:02X} */"
                 })
 
             else:

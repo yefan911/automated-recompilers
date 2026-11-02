@@ -177,4 +177,17 @@ def test_lift_rom_to_c_output():
     assert "mem_write32" in c_source
     assert "uint32_t bb_08000000(ArmCpuContext* ctx)" in c_source
     assert "uint32_t bb_080000C0(ArmCpuContext* ctx)" in c_source
-    assert "int main(int argc, char** argv)" in c_source
+    assert "gba_bios_swi" in c_source
+
+
+def test_arm_lifter_swi():
+    # 0xEF000004: swi 0x04 (IntrWait)
+    # 0xE12FFF1E: bx lr
+    rom = struct.pack("<2I", 0xEF000004, 0xE12FFF1E)
+    lifter = ArmLifter(rom, base_vram=0x08000000)
+    ops, targets = lifter.lift_block(0x08000000)
+
+    assert len(ops) == 2
+    assert ops[0]["op"] == "SWI"
+    assert "gba_bios_swi(ctx, 0x04)" in ops[0]["c_code"]
+    assert ops[1]["op"] == "BX"

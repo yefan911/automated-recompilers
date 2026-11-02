@@ -41,11 +41,13 @@ ISA_DEFINITIONS = {
             "PUSH", "POP", "POP_PC", "ADD_SP", "BX", "MOV_HI", "ADD_HI", "CMP_HI",
             "BL_THUMB", "BRANCH", "B_COND", "LDR_PC", "MOV_IMM", "CMP_IMM",
             "ADD_IMM", "SUB_IMM", "LDR", "STR", "LDRH", "STRH", "ADD_REG",
-            "SUB_REG", "THUMB_RAW", "HALT"
+            "SUB_REG", "THUMB_RAW", "HALT", "LSL_IMM", "LSR_IMM", "ASR_IMM",
+            "AND_REG", "EOR_REG", "ORR_REG", "BIC_REG", "MVN_REG", "TST_REG",
+            "NEG_REG", "MUL_REG", "LDMIA", "STMIA", "SWI", "LDR_SP", "STR_SP",
+            "ADD_SP_IMM", "ADD_PC_IMM"
         ],
         "planned": [
-            "LSL_IMM", "LSR_IMM", "ASR_IMM", "AND_REG", "EOR_REG", "ORR_REG",
-            "BIC_REG", "MVN_REG", "TST_REG", "NEG_REG", "MUL_REG", "LDMIA", "STMIA"
+            "BKPT", "REV", "REV16", "REVSH", "SETEND"
         ]
     },
     "MIPS I / III": {
