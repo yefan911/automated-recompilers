@@ -241,6 +241,39 @@ class SnesLifter:
                 c = f"snes_write16(ctx, (ctx->db << 16) | 0x{addr:04X}, ctx->y);"
             return {"pc": instr_pc, "op": "STY_ABS", "c_code": c}, next_pc
 
+        # 5b. STZ (Store Zero)
+        elif opcode == 0x64:  # STZ Direct Page
+            zp = get_zp8()
+            if m_flag:
+                c = f"snes_write8(ctx, (ctx->dp + 0x{zp:02X}) & 0xFFFF, 0);"
+            else:
+                c = f"snes_write16(ctx, (ctx->dp + 0x{zp:02X}) & 0xFFFF, 0);"
+            return {"pc": instr_pc, "op": "STZ_ZP", "c_code": c}, next_pc
+
+        elif opcode == 0x74:  # STZ Direct Page,X
+            zp = get_zp8()
+            if m_flag:
+                c = f"snes_write8(ctx, (ctx->dp + 0x{zp:02X} + ctx->x) & 0xFFFF, 0);"
+            else:
+                c = f"snes_write16(ctx, (ctx->dp + 0x{zp:02X} + ctx->x) & 0xFFFF, 0);"
+            return {"pc": instr_pc, "op": "STZ_ZPX", "c_code": c}, next_pc
+
+        elif opcode == 0x9C:  # STZ Absolute
+            addr = get_abs16()
+            if m_flag:
+                c = f"snes_write8(ctx, (ctx->db << 16) | 0x{addr:04X}, 0);"
+            else:
+                c = f"snes_write16(ctx, (ctx->db << 16) | 0x{addr:04X}, 0);"
+            return {"pc": instr_pc, "op": "STZ_ABS", "c_code": c}, next_pc
+
+        elif opcode == 0x9E:  # STZ Absolute,X
+            addr = get_abs16()
+            if m_flag:
+                c = f"snes_write8(ctx, (ctx->db << 16) | ((0x{addr:04X} + ctx->x) & 0xFFFF), 0);"
+            else:
+                c = f"snes_write16(ctx, (ctx->db << 16) | ((0x{addr:04X} + ctx->x) & 0xFFFF), 0);"
+            return {"pc": instr_pc, "op": "STZ_ABX", "c_code": c}, next_pc
+
         # 6. Arithmetic & Logic: ADC, SBC, CMP
         elif opcode == 0x69:  # ADC Immediate
             val, width = get_imm_m()
@@ -322,7 +355,7 @@ class SnesLifter:
         elif opcode == 0x20:  # JSR Absolute
             addr = get_abs16()
             target = ((pc & 0xFF0000) | addr) & 0xFFFFFF
-            ret_addr = next_pc
+            ret_addr = next_pc - 1
             return {
                 "pc": instr_pc,
                 "op": "JSR",
@@ -333,8 +366,8 @@ class SnesLifter:
 
         elif opcode == 0x22:  # JSL Long (Subroutine)
             addr24 = get_abs24()
-            ret_addr = next_pc
-            # Pushing Program Bank (8-bit) and 16-bit return address
+            ret_addr = next_pc - 1
+            # Pushing Program Bank (8-bit) and 16-bit return address (PC of last byte of instruction)
             return {
                 "pc": instr_pc,
                 "op": "JSL",
