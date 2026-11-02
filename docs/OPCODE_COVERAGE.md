@@ -2,12 +2,12 @@
 
 This document tracks Ahead-Of-Time (AOT) instruction coverage across all supported console architectures in **Automated Game ROM Recompiler**.
 
-> **Overall Core Opcode Coverage:** **75.3%** (174/231 core opcodes implemented)
+> **Overall Core Opcode Coverage:** **79.7%** (192/241 core opcodes implemented)
 
 | Architecture | Target Console | Implemented | Target Baseline | Coverage | Status |
 | :--- | :--- | :---: | :---: | :---: | :---: |
 | **ARM7TDMI (ARMv4T)** | Game Boy Advance (ARM) | 30 | 43 | **69.8%** | 🟡 In Progress |
-| **ARM Thumb-16** | Game Boy Advance (Thumb) | 24 | 37 | **64.9%** | 🟡 In Progress |
+| **ARM Thumb-16** | Game Boy Advance (Thumb) | 42 | 47 | **89.4%** | 🟢 Mature |
 | **MIPS I / III** | Nintendo 64 & PlayStation 1 | 38 | 60 | **63.3%** | 🟡 In Progress |
 | **W65C816S** | Super Nintendo Entertainment System (SNES) | 82 | 91 | **90.1%** | 🟢 Mature |
 
@@ -31,13 +31,13 @@ This document tracks Ahead-Of-Time (AOT) instruction coverage across all support
 ## 🕹️ ARM Thumb-16
 **Target Console:** Game Boy Advance (Thumb)  
 **Lifter Source:** [`src/lifter/thumb_lifter.py`](../src/lifter/thumb_lifter.py)  
-**Coverage:** **64.9%** (24 implemented / 13 prioritized upcoming)
+**Coverage:** **89.4%** (42 implemented / 5 prioritized upcoming)
 
 ### ✅ Implemented Instructions
-`ADD_HI`, `ADD_IMM`, `ADD_REG`, `ADD_SP`, `BL_THUMB`, `BRANCH`, `BX`, `B_COND`, `CMP_HI`, `CMP_IMM`, `HALT`, `LDR`, `LDRH`, `LDR_PC`, `MOV_HI`, `MOV_IMM`, `POP`, `POP_PC`, `PUSH`, `STR`, `STRH`, `SUB_IMM`, `SUB_REG`, `THUMB_RAW`
+`ADD_HI`, `ADD_IMM`, `ADD_PC_IMM`, `ADD_REG`, `ADD_SP`, `ADD_SP_IMM`, `AND_REG`, `ASR_IMM`, `BIC_REG`, `BL_THUMB`, `BRANCH`, `BX`, `B_COND`, `CMP_HI`, `CMP_IMM`, `EOR_REG`, `HALT`, `LDMIA`, `LDR`, `LDRH`, `LDR_PC`, `LDR_SP`, `LSL_IMM`, `LSR_IMM`, `MOV_HI`, `MOV_IMM`, `MUL_REG`, `MVN_REG`, `NEG_REG`, `ORR_REG`, `POP`, `POP_PC`, `PUSH`, `STMIA`, `STR`, `STRH`, `STR_SP`, `SUB_IMM`, `SUB_REG`, `SWI`, `THUMB_RAW`, `TST_REG`
 
 ### 🎯 Prioritized Missing Instructions (Community Welcome!)
-`AND_REG`, `ASR_IMM`, `BIC_REG`, `EOR_REG`, `LDMIA`, `LSL_IMM`, `LSR_IMM`, `MUL_REG`, `MVN_REG`, `NEG_REG`, `ORR_REG`, `STMIA`, `TST_REG`
+`BKPT`, `REV`, `REV16`, `REVSH`, `SETEND`
 
 > 💡 *Want to implement one of these opcodes? Check out our [Instruction Contribution Guide](../CONTRIBUTING.md#adding-a-new-instruction-opcode-walkthrough) and submit a PR using the [New Instruction Template](../.github/ISSUE_TEMPLATE/new_instruction.yml).*
 

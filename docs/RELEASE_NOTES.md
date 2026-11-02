@@ -45,12 +45,12 @@ Download the zero-dependency native executable for your operating system:
 
 ---
 
-## 📊 Opcode Coverage (75.3% (174/231 core opcodes implemented))
+## 📊 Opcode Coverage (79.7% (192/241 core opcodes implemented))
 
 | Architecture | Target Console | Implemented / Total | Coverage % |
 | :--- | :--- | :---: | :---: |
 | **ARM7TDMI (ARMv4T)** | Game Boy Advance (ARM) | 30 / 43 | **69.8%** |
-| **ARM Thumb-16** | Game Boy Advance (Thumb) | 24 / 37 | **64.9%** |
+| **ARM Thumb-16** | Game Boy Advance (Thumb) | 42 / 47 | **89.4%** |
 | **MIPS I / III** | Nintendo 64 & PlayStation 1 | 38 / 60 | **63.3%** |
 | **W65C816S** | Super Nintendo Entertainment System (SNES) | 82 / 91 | **90.1%** |
 
