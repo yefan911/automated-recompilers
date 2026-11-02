@@ -193,7 +193,7 @@ python recompile.py
 
 Inspect the internal structure and Shannon entropy map of any ROM before recompiling:
 ```bash
-python recompile.py --blocks roms/n64/Yoshi.z64
+python recompile.py --blocks roms/n64/testfile.z64
 python recompile.py --blocks roms/test/hello_gba.gba
 ```
 This generates:
