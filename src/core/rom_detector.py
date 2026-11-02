@@ -125,7 +125,7 @@ def detect_ps1(data: bytes) -> Optional[Dict[str, Any]]:
         title = "PlayStation CD Image"
         for pvd_offset in [37632 + 24, 32768]:  # raw 2352-byte CD or 2048-byte ISO
             if len(data) >= pvd_offset + 72 and data[pvd_offset+1:pvd_offset+6] == b"CD001":
-                vol_id = data[pvd_offset+40:pvd_offset+72].decode('ascii', errors='ignore').strip()
+                vol_id = data[pvd_offset+40:pvd_offset+72].decode('ascii', errors='ignore').strip('\x00').strip()
                 if vol_id:
                     title = vol_id
                 break
