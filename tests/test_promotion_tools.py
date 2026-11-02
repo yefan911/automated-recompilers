@@ -114,3 +114,52 @@ def test_generate_showcase_flow(tmp_path):
     assert "<!DOCTYPE html>" in html_output
     assert "mermaid.initialize" in html_output
     assert "ArmCpuContext" in html_output
+
+
+def test_opcode_bounty_tool():
+    from scripts.opcode_bounty import format_quest, generate_markdown_bounties
+
+    quest = format_quest("SWP")
+    assert "Opcode Bounty: Implement `SWP`" in quest
+    assert "ARM7TDMI" in quest
+    assert "GBATEK" in quest
+    assert "pytest -v" in quest
+
+    md = generate_markdown_bounties()
+    assert "# 🏆 Contributor Opcode Bounties" in md
+    assert "ARM7TDMI" in md
+    assert "ARM Thumb-16" in md
+    assert "MIPS I / III" in md
+    assert "W65C816S" in md
+    assert "`WANTED` 🎯" in md
+
+
+def test_benchmark_suite():
+    from scripts.benchmark_suite import run_all_benchmarks
+
+    res = run_all_benchmarks()
+    assert "timestamp" in res
+    assert "benchmarks" in res
+    assert len(res["benchmarks"]) == 4
+
+    for b in res["benchmarks"]:
+        assert "architecture" in b
+        assert b["ops_per_second"] > 0
+        assert b["avg_latency_ms"] >= 0
+
+
+def test_interactive_web_inspector_exists():
+    index_path = os.path.join(PROJECT_ROOT, "docs", "index.html")
+    assert os.path.exists(index_path)
+
+    with open(index_path, "r", encoding="utf-8") as f:
+        html = f.read()
+
+    assert "<!DOCTYPE html>" in html
+    assert "Automated Game ROM Recompiler" in html
+    assert "GBA (ARM7TDMI)" in html
+    assert "N64 (MIPS III)" in html
+    assert "SNES (65816)" in html
+    assert "PS1 (MIPS I)" in html
+    assert "calculateBufferEntropy" in html
+
