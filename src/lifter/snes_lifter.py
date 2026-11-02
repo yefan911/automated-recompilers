@@ -224,6 +224,70 @@ class SnesLifter:
             c = f"ctx->y = 0x{val:04X};" if width == 2 else f"ctx->y = (ctx->y & 0xFF00) | 0x{val:02X};"
             return {"pc": instr_pc, "op": "LDY_IMM", "c_code": c}, next_pc
 
+        elif opcode == 0xA6:  # LDX Direct Page
+            zp = get_zp8()
+            if x_flag:
+                c = f"ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, (ctx->dp + 0x{zp:02X}) & 0xFFFF);"
+            else:
+                c = f"ctx->x = snes_read16(ctx, (ctx->dp + 0x{zp:02X}) & 0xFFFF);"
+            return {"pc": instr_pc, "op": "LDX_ZP", "c_code": c}, next_pc
+
+        elif opcode == 0xA4:  # LDY Direct Page
+            zp = get_zp8()
+            if x_flag:
+                c = f"ctx->y = (ctx->y & 0xFF00) | snes_read8(ctx, (ctx->dp + 0x{zp:02X}) & 0xFFFF);"
+            else:
+                c = f"ctx->y = snes_read16(ctx, (ctx->dp + 0x{zp:02X}) & 0xFFFF);"
+            return {"pc": instr_pc, "op": "LDY_ZP", "c_code": c}, next_pc
+
+        elif opcode == 0xAE:  # LDX Absolute
+            addr = get_abs16()
+            if x_flag:
+                c = f"ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, (ctx->db << 16) | 0x{addr:04X});"
+            else:
+                c = f"ctx->x = snes_read16(ctx, (ctx->db << 16) | 0x{addr:04X});"
+            return {"pc": instr_pc, "op": "LDX_ABS", "c_code": c}, next_pc
+
+        elif opcode == 0xAC:  # LDY Absolute
+            addr = get_abs16()
+            if x_flag:
+                c = f"ctx->y = (ctx->y & 0xFF00) | snes_read8(ctx, (ctx->db << 16) | 0x{addr:04X});"
+            else:
+                c = f"ctx->y = snes_read16(ctx, (ctx->db << 16) | 0x{addr:04X});"
+            return {"pc": instr_pc, "op": "LDY_ABS", "c_code": c}, next_pc
+
+        elif opcode == 0xB6:  # LDX Direct Page,Y
+            zp = get_zp8()
+            if x_flag:
+                c = f"ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, (ctx->dp + 0x{zp:02X} + ctx->y) & 0xFFFF);"
+            else:
+                c = f"ctx->x = snes_read16(ctx, (ctx->dp + 0x{zp:02X} + ctx->y) & 0xFFFF);"
+            return {"pc": instr_pc, "op": "LDX_ZPY", "c_code": c}, next_pc
+
+        elif opcode == 0xB4:  # LDY Direct Page,X
+            zp = get_zp8()
+            if x_flag:
+                c = f"ctx->y = (ctx->y & 0xFF00) | snes_read8(ctx, (ctx->dp + 0x{zp:02X} + ctx->x) & 0xFFFF);"
+            else:
+                c = f"ctx->y = snes_read16(ctx, (ctx->dp + 0x{zp:02X} + ctx->x) & 0xFFFF);"
+            return {"pc": instr_pc, "op": "LDY_ZPX", "c_code": c}, next_pc
+
+        elif opcode == 0xBE:  # LDX Absolute,Y
+            addr = get_abs16()
+            if x_flag:
+                c = f"ctx->x = (ctx->x & 0xFF00) | snes_read8(ctx, (ctx->db << 16) | ((0x{addr:04X} + ctx->y) & 0xFFFF));"
+            else:
+                c = f"ctx->x = snes_read16(ctx, (ctx->db << 16) | ((0x{addr:04X} + ctx->y) & 0xFFFF));"
+            return {"pc": instr_pc, "op": "LDX_ABY", "c_code": c}, next_pc
+
+        elif opcode == 0xBC:  # LDY Absolute,X
+            addr = get_abs16()
+            if x_flag:
+                c = f"ctx->y = (ctx->y & 0xFF00) | snes_read8(ctx, (ctx->db << 16) | ((0x{addr:04X} + ctx->x) & 0xFFFF));"
+            else:
+                c = f"ctx->y = snes_read16(ctx, (ctx->db << 16) | ((0x{addr:04X} + ctx->x) & 0xFFFF));"
+            return {"pc": instr_pc, "op": "LDY_ABX", "c_code": c}, next_pc
+
         # 5. STX / STY
         elif opcode == 0x86:  # STX Direct Page
             zp = get_zp8()
@@ -377,7 +441,8 @@ class SnesLifter:
                 "op": "JSR",
                 "target": target,
                 "ret_addr": ret_addr,
-                "c_code": f"ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x{ret_addr & 0xFFFF:04X});\n    recomp_snes_call(ctx, 0x{target:06X});"
+                "fallthrough": next_pc,
+                "c_code": f"ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x{ret_addr & 0xFFFF:04X});\n    recomp_snes_call(ctx, 0x{target:06X});\n    return 0x{next_pc:06X};"
             }, next_pc
 
         elif opcode == 0x22:  # JSL Long (Subroutine)
@@ -389,7 +454,8 @@ class SnesLifter:
                 "op": "JSL",
                 "target": addr24,
                 "ret_addr": ret_addr,
-                "c_code": f"ctx->sp -= 3;\n    snes_write8(ctx, 0x000000 | ctx->sp, ctx->pb);\n    snes_write16(ctx, 0x000000 | ctx->sp + 1, 0x{ret_addr & 0xFFFF:04X});\n    recomp_snes_call(ctx, 0x{addr24:06X});"
+                "fallthrough": next_pc,
+                "c_code": f"ctx->sp -= 3;\n    snes_write8(ctx, 0x000000 | ctx->sp, ctx->pb);\n    snes_write16(ctx, 0x000000 | ctx->sp + 1, 0x{ret_addr & 0xFFFF:04X});\n    recomp_snes_call(ctx, 0x{addr24:06X});\n    return 0x{next_pc:06X};"
             }, next_pc
 
         # 8. Returns: RTS ($60), RTL ($6B)
@@ -849,6 +915,10 @@ def lift_snes_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blo
         '    uint8_t  cgram[512];       /* 512-byte CGRAM color palette */',
         '    uint16_t vram_addr;        /* PPU VRAM address pointer ($2116/$2117) */',
         '    uint16_t cgram_addr;       /* PPU CGRAM address pointer ($2121) */',
+        '    int16_t  m7a, m7b, m7c, m7d;/* Mode 7 affine transformation matrix ($211B-$211E) */',
+        '    int16_t  m7x, m7y;         /* Mode 7 center coordinates ($211F-$2120) */',
+        '    uint8_t  m7_prev_byte;     /* Mode 7 16-bit parameter write latch */',
+        '    uint8_t  spc700_ports[4];  /* Audio APU IO communication ports ($2140-$2143) */',
         '    uint8_t  joypad1[2];       /* Joypad 1 data registers ($4218/$4219) */',
         '    uint32_t pixels_written;   /* Framebuffer activity counter */',
         '} SnesCpuContext;',
@@ -865,6 +935,10 @@ def lift_snes_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blo
         '    /* Stack (0x0100..0x01FF) and Direct Page (0x0000..0x00FF) live here */',
         '    if (((bank <= 0x3F) || (bank >= 0x80 && bank <= 0xBF)) && offset < 0x2000) {',
         '        return ctx->ram[offset];',
+        '    }',
+        '    /* SPC700 Audio Coprocessor Communication Ports ($2140-$2143) */',
+        '    if (((bank <= 0x3F) || (bank >= 0x80 && bank <= 0xBF)) && offset >= 0x2140 && offset <= 0x2143) {',
+        '        return ctx->spc700_ports[offset - 0x2140];',
         '    }',
         '    /* SNES Joypad 1 Auto-Read Data Registers ($4218-$4219) */',
         '    if (((bank <= 0x3F) || (bank >= 0x80 && bank <= 0xBF)) && (offset == 0x4218 || offset == 0x4219)) {',
@@ -884,6 +958,25 @@ def lift_snes_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blo
         '    /* Banks 0x00..0x3F and 0x80..0xBF: low 8KB mirror to WRAM */',
         '    if (((bank <= 0x3F) || (bank >= 0x80 && bank <= 0xBF)) && offset < 0x2000) {',
         '        ctx->ram[offset] = val;',
+        '        return;',
+        '    }',
+        '    /* SPC700 Audio Coprocessor Communication Ports ($2140-$2143) */',
+        '    if (((bank <= 0x3F) || (bank >= 0x80 && bank <= 0xBF)) && offset >= 0x2140 && offset <= 0x2143) {',
+        '        ctx->spc700_ports[offset - 0x2140] = val;',
+        '        /* Emulate SPC700 handshake acknowledgement echo */',
+        '        if (offset == 0x2140 && val == 0xCC) ctx->spc700_ports[0] = 0xCC;',
+        '        return;',
+        '    }',
+        '    /* Mode 7 Affine Matrix Parameter Writes ($211B-$2120) */',
+        '    if (((bank <= 0x3F) || (bank >= 0x80 && bank <= 0xBF)) && offset >= 0x211B && offset <= 0x2120) {',
+        '        int16_t word_val = (int16_t)((val << 8) | ctx->m7_prev_byte);',
+        '        ctx->m7_prev_byte = val;',
+        '        if (offset == 0x211B) ctx->m7a = word_val;',
+        '        else if (offset == 0x211C) ctx->m7b = word_val;',
+        '        else if (offset == 0x211D) ctx->m7c = word_val;',
+        '        else if (offset == 0x211E) ctx->m7d = word_val;',
+        '        else if (offset == 0x211F) ctx->m7x = (int16_t)((val << 8) | (ctx->m7x & 0xFF));',
+        '        else if (offset == 0x2120) ctx->m7y = (int16_t)((val << 8) | (ctx->m7y & 0xFF));',
         '        return;',
         '    }',
         '    /* PPU VRAM / Palette writes */',
@@ -985,11 +1078,23 @@ def lift_snes_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blo
         '}',
         '',
         'void update_snes_screen(SnesCpuContext* ctx) {',
+        '    bool has_mode7 = (ctx->m7a != 0 || ctx->m7b != 0 || ctx->m7c != 0 || ctx->m7d != 0);',
         '    for (int y = 0; y < 224; y++) {',
         '        for (int x = 0; x < 256; x++) {',
         '            int idx = y * 256 + x;',
         '            uint8_t r, g, b;',
-        '            if (ctx->pixels_written > 100) {',
+        '            if (has_mode7 && ctx->pixels_written > 100) {',
+        '                /* Mode 7 Affine Formula: [X\', Y\'] = [A B; C D] * [X - X0, Y - Y0] + [X0, Y0] */',
+        '                int sx = x - (ctx->m7x & 0x1FF);',
+        '                int sy = y - (ctx->m7y & 0x1FF);',
+        '                int mx = ((ctx->m7a * sx + ctx->m7b * sy) >> 8) + (ctx->m7x & 0x1FF);',
+        '                int my = ((ctx->m7c * sx + ctx->m7d * sy) >> 8) + (ctx->m7y & 0x1FF);',
+        '                uint32_t vaddr = ((my & 0xFF) * 256 + (mx & 0xFF)) % sizeof(ctx->vram);',
+        '                uint8_t tile_pixel = ctx->vram[vaddr];',
+        '                r = (tile_pixel & 0x07) << 5;',
+        '                g = ((tile_pixel >> 3) & 0x07) << 5;',
+        '                b = (tile_pixel & 0xC0);',
+        '            } else if (ctx->pixels_written > 100) {',
         '                uint16_t tile_pixel = *(uint16_t*)&ctx->vram[(idx * 2) % sizeof(ctx->vram)];',
         '                r = ((tile_pixel >>  0) & 0x1F) << 3;',
         '                g = ((tile_pixel >>  5) & 0x1F) << 3;',
@@ -1100,6 +1205,10 @@ def lift_snes_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blo
         '    SnesCpuContext* ctx = &s_snes_ctx;',
         '    ctx->sp = 0x01FF;  /* Initial SNES Stack Pointer */',
         '    ctx->p  = 0x34;    /* Initial Status Register: M=1, X=1, I=1 */',
+        '    ctx->spc700_ports[0] = 0xBB; /* SPC700 Audio Ready Handshake signature */',
+        '    ctx->spc700_ports[1] = 0xAA;',
+        '    ctx->m7a = 0x0100; /* Mode 7 1.0 identity scale */',
+        '    ctx->m7d = 0x0100;',
         f'    uint32_t next_pc = 0x{(entry_bank << 16) | (entry_pc & 0xFFFF):06X};',
         '#ifdef _WIN32',
         '    if (launch_window) {',
