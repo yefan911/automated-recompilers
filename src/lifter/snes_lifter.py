@@ -13,7 +13,7 @@ from typing import List, Dict, Any, Tuple, Optional
 # Ensure project root is on sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from src.lifter.cfg import BasicBlock, ControlFlowGraph
+from src.lifter.cfg import BasicBlock, ControlFlowGraph, JumpTableRecovery
 
 
 class SnesLifter:
@@ -306,7 +306,17 @@ class SnesLifter:
             return {
                 "pc": instr_pc,
                 "op": "JMP_IND",
+                "indirect_addr": addr,
                 "c_code": f"return snes_read16(ctx, (ctx->pb << 16) | 0x{addr:04X}); /* jmp (0x{addr:04X}) */"
+            }, next_pc
+
+        elif opcode == 0x7C:  # JMP Absolute Indexed Indirect ($xxxx,X) - Switch/Jump Table
+            addr = get_abs16()
+            return {
+                "pc": instr_pc,
+                "op": "JMP_IND_X",
+                "indirect_addr": addr,
+                "c_code": f"return snes_read16(ctx, (ctx->pb << 16) | ((0x{addr:04X} + ctx->x) & 0xFFFF)); /* jmp (0x{addr:04X},x) */"
             }, next_pc
 
         elif opcode == 0x20:  # JSR Absolute
@@ -699,6 +709,17 @@ class SnesLifter:
             visited.add(addr)
 
             ops, targets, final_p = self.lift_block(bank, pc, p)
+
+            # Check for recoverable indirect switch/jump tables
+            if not targets:
+                jt = JumpTableRecovery.recover_snes_jump_table(
+                    ops,
+                    read_u16_func=lambda b, off: self.read_u16((b << 16) | off),
+                    bank=bank
+                )
+                if jt:
+                    targets.extend(jt.targets)
+
             block = BasicBlock(
                 start_vram=addr,
                 end_vram=ops[-1]["pc"] if ops else addr,
@@ -706,6 +727,13 @@ class SnesLifter:
                 successors=targets,
                 is_terminal=len(targets) == 0
             )
+
+            if "jt" in locals() and jt:
+                block.is_indirect = True
+                block.terminator_type = "SWITCH"
+                block.jump_table = jt
+                cfg.add_jump_table(jt)
+
             cfg.add_block(block)
 
             for target in targets:

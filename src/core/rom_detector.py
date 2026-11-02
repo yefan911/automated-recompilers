@@ -92,7 +92,7 @@ def detect_n64(data: bytes) -> Optional[Dict[str, Any]]:
 
 
 def detect_ps1(data: bytes) -> Optional[Dict[str, Any]]:
-    # PS-X EXE direct format
+    # 1. PS-X EXE direct format
     if data.startswith(b"PS-X EXE"):
         initial_pc = struct.unpack("<I", data[0x10:0x14])[0]
         text_vram = struct.unpack("<I", data[0x18:0x1C])[0]
@@ -110,6 +110,40 @@ def detect_ps1(data: bytes) -> Optional[Dict[str, Any]]:
             "marker": marker,
             "size_bytes": len(data),
         }
+
+    # 2. PS1 CD Image (ISO-9660 raw 2352-byte bin or standard 2048-byte iso)
+    psx_idx = data.find(b"PS-X EXE")
+    if psx_idx != -1 and len(data) >= psx_idx + 0x40:
+        hdr = data[psx_idx:psx_idx+2048]
+        initial_pc = struct.unpack("<I", hdr[0x10:0x14])[0]
+        text_vram = struct.unpack("<I", hdr[0x18:0x1C])[0]
+        text_size = struct.unpack("<I", hdr[0x1C:0x20])[0]
+        initial_sp = struct.unpack("<I", hdr[0x30:0x34])[0]
+        marker = hdr[0x4C:0x60].decode('ascii', errors='ignore').strip('\x00').strip()
+
+        # Check for Volume Descriptor title
+        title = "PlayStation CD Image"
+        for pvd_offset in [37632 + 24, 32768]:  # raw 2352-byte CD or 2048-byte ISO
+            if len(data) >= pvd_offset + 72 and data[pvd_offset+1:pvd_offset+6] == b"CD001":
+                vol_id = data[pvd_offset+40:pvd_offset+72].decode('ascii', errors='ignore').strip()
+                if vol_id:
+                    title = vol_id
+                break
+
+        return {
+            "console": "Sony PlayStation 1 (CD Image)",
+            "architecture": "MIPS I (R3000A 32-bit + GTE Coprocessor 2)",
+            "endianness": "little",
+            "entry_point": hex(initial_pc),
+            "text_vram": hex(text_vram),
+            "text_size": text_size,
+            "initial_sp": hex(initial_sp),
+            "marker": marker,
+            "title": title,
+            "exe_offset": psx_idx,
+            "size_bytes": len(data),
+        }
+
     return None
 
 

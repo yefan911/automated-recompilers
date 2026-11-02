@@ -87,6 +87,32 @@ def test_detect_ps1_exe():
     assert res["text_size"] == 0x20000
 
 
+def test_detect_ps1_cd_image(tmp_path):
+    ps1_rom = "roms/ps1/Need for Speed - Porsche Unleashed (Track 01)(axekin.com).bin"
+    if os.path.exists(ps1_rom):
+        res = inspect_file(ps1_rom)
+        assert res is not None
+        assert "PlayStation 1" in res["console"]
+        assert res["entry_point"] == "0x8009f838"
+        assert res["title"] == "NFS_NTSC"
+    else:
+        # Synthetic CD image
+        synth_cd = bytearray(2352 * 26)
+        synth_cd[16*2352 + 24 + 1 : 16*2352 + 24 + 6] = b"CD001"
+        synth_cd[16*2352 + 24 + 40 : 16*2352 + 24 + 48] = b"TEST_CD "
+        synth_cd[24*2352 + 24 : 24*2352 + 32] = b"PS-X EXE"
+        struct.pack_into("<I", synth_cd, 24*2352 + 24 + 0x10, 0x8009F838)
+        struct.pack_into("<I", synth_cd, 24*2352 + 24 + 0x18, 0x8005A800)
+        struct.pack_into("<I", synth_cd, 24*2352 + 24 + 0x1C, 376832)
+
+        res = detect_ps1(bytes(synth_cd))
+        assert res is not None
+        assert "PlayStation 1" in res["console"]
+        assert res["title"] == "TEST_CD"
+        assert res["entry_point"] == "0x8009f838"
+
+
+
 def test_detect_nes():
     nes_header = bytearray(16)
     nes_header[0:4] = b"NES\x1a"

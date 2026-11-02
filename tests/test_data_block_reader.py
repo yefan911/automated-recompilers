@@ -30,3 +30,25 @@ def test_gba_reader(tmp_path):
     reader = create_block_reader(rom_path)
     off = reader.vram_to_offset(0x08000000)
     assert off == 0
+
+def test_ps1_reader(tmp_path):
+    rom_path = "roms/ps1/Need for Speed - Porsche Unleashed (Track 01)(axekin.com).bin"
+    if not os.path.exists(rom_path):
+        # Create synthetic PS-X EXE
+        import struct
+        header = bytearray(2048)
+        header[:8] = b"PS-X EXE"
+        header[0x10:0x14] = struct.pack("<I", 0x80010000) # PC
+        header[0x18:0x1C] = struct.pack("<I", 0x80010000) # text VRAM
+        header[0x1C:0x20] = struct.pack("<I", 2048)       # size
+        synth_cd = bytearray(2352 * 26)
+        synth_cd[24*2352 + 24 : 24*2352 + 2072] = header
+        synth_cd[25*2352 + 24 : 25*2352 + 28] = struct.pack("<I", 0x00001021)
+        rom_path = str(tmp_path / "test_ps1.bin")
+        with open(rom_path, "wb") as f:
+            f.write(synth_cd)
+
+    reader = create_block_reader(rom_path)
+    off = reader.vram_to_offset(reader.text_vram)
+    assert off is not None
+    assert reader.read_u32(0x8009F838 if "Need for Speed" in rom_path else 0x80010000) == 0x00001021

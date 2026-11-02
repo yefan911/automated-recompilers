@@ -14,7 +14,7 @@ from typing import List, Dict, Any, Tuple, Optional
 # Ensure project root is on sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from src.lifter.cfg import BasicBlock, ControlFlowGraph
+from src.lifter.cfg import BasicBlock, ControlFlowGraph, JumpTableRecovery
 from src.lifter.thumb_lifter import ThumbLifter
 
 
@@ -281,6 +281,18 @@ class ArmLifter:
                             "c_code": f"{func_call}(ctx, {addr_expr}, {val_cast}[{rd}]);"
                         })
 
+            # 6. Software Interrupt (SWI): 0x0F000000
+            elif (raw_instr & 0x0F000000) == 0x0F000000:
+                swi_num = (raw_instr >> 16) & 0xFF
+                if swi_num == 0:
+                    swi_num = raw_instr & 0xFF
+                ir_ops.append({
+                    "pc": instr_pc,
+                    "op": "SWI",
+                    "swi": swi_num,
+                    "c_code": f"gba_bios_swi(ctx, 0x{swi_num:02X}); /* swi 0x{swi_num:02X} */"
+                })
+
             else:
                 ir_ops.append({
                     "pc": instr_pc,
@@ -322,8 +334,17 @@ class ArmLifter:
 
             if is_thumb:
                 ops, targets = thumb_lifter.lift_block(vram)
+                worklist_targets = [t if (t & 1) else (t | 1) for t in targets]
             else:
                 ops, targets = self.lift_block(vram)
+                worklist_targets = targets
+
+            # Check for recoverable indirect jump tables
+            if not targets and not is_thumb:
+                jt = JumpTableRecovery.recover_arm_jump_table(ops, self.read_u32)
+                if jt:
+                    targets.extend(jt.targets)
+                    worklist_targets.extend(jt.targets)
 
             block = BasicBlock(
                 start_vram=vram,
@@ -332,9 +353,16 @@ class ArmLifter:
                 successors=targets,
                 is_terminal=len(targets) == 0
             )
+
+            if "jt" in locals() and jt:
+                block.is_indirect = True
+                block.terminator_type = "SWITCH"
+                block.jump_table = jt
+                cfg.add_jump_table(jt)
+
             cfg.add_block(block)
 
-            for target in targets:
+            for target in worklist_targets:
                 clean_target = target & ~1
                 if clean_target not in visited and clean_target not in queued and self.is_valid_vram(clean_target):
                     queued.add(clean_target)
@@ -420,6 +448,82 @@ def lift_rom_to_c(rom_path: str, entry_point: int = 0x08000000, max_blocks: int 
         '    if (addr >= 0x02000000 && addr < 0x02040000) *(uint32_t*)&ctx->ewram[addr - 0x02000000] = val;',
         '    else if (addr >= 0x03000000 && addr < 0x03008000) *(uint32_t*)&ctx->iwram[addr - 0x03000000] = val;',
         '    else if (addr >= 0x06000000 && addr < 0x06018000) *(uint32_t*)&ctx->vram[addr - 0x06000000] = val;',
+        '}',
+        '',
+        '/* GBA BIOS SWI Emulation Shims */',
+        'static inline void gba_bios_swi(ArmCpuContext* ctx, uint32_t swi_num) {',
+        '    switch (swi_num) {',
+        '        case 0x00: /* SoftReset */',
+        '            ctx->r[13] = 0x03007F00;',
+        '            break;',
+        '        case 0x01: /* RegisterRamReset */',
+        '            break;',
+        '        case 0x02: /* Halt */',
+        '        case 0x03: /* Stop */',
+        '        case 0x04: /* IntrWait */',
+        '        case 0x05: /* VBlankIntrWait */',
+        '            break;',
+        '        case 0x06: /* Div: r0 / r1 */',
+        '            if (ctx->r[1] != 0) {',
+        '                int32_t num = (int32_t)ctx->r[0];',
+        '                int32_t den = (int32_t)ctx->r[1];',
+        '                ctx->r[0] = (uint32_t)(num / den);',
+        '                ctx->r[1] = (uint32_t)(num % den);',
+        '                ctx->r[3] = (uint32_t)(abs(num / den));',
+        '            }',
+        '            break;',
+        '        case 0x07: /* DivARM: r1 / r0 */',
+        '            if (ctx->r[0] != 0) {',
+        '                int32_t num = (int32_t)ctx->r[1];',
+        '                int32_t den = (int32_t)ctx->r[0];',
+        '                ctx->r[0] = (uint32_t)(num / den);',
+        '                ctx->r[1] = (uint32_t)(num % den);',
+        '                ctx->r[3] = (uint32_t)(abs(num / den));',
+        '            }',
+        '            break;',
+        '        case 0x08: /* Sqrt */',
+        '            {',
+        '                uint32_t val = ctx->r[0];',
+        '                uint32_t root = 0;',
+        '                while ((root + 1) * (root + 1) <= val) root++;',
+        '                ctx->r[0] = root;',
+        '            }',
+        '            break;',
+        '        case 0x0B: /* CpuSet */',
+        '            {',
+        '                uint32_t src = ctx->r[0];',
+        '                uint32_t dst = ctx->r[1];',
+        '                uint32_t control = ctx->r[2];',
+        '                uint32_t count = control & 0x1FFFFF;',
+        '                bool is_32bit = (control & (1 << 26)) != 0;',
+        '                bool is_fill = (control & (1 << 24)) != 0;',
+        '                for (uint32_t i = 0; i < count; i++) {',
+        '                    if (is_32bit) {',
+        '                        uint32_t val = mem_read32(ctx, is_fill ? src : (src + i * 4));',
+        '                        mem_write32(ctx, dst + i * 4, val);',
+        '                    } else {',
+        '                        uint16_t val = mem_read16(ctx, is_fill ? src : (src + i * 2));',
+        '                        mem_write16(ctx, dst + i * 2, val);',
+        '                    }',
+        '                }',
+        '            }',
+        '            break;',
+        '        case 0x0C: /* CpuFastSet */',
+        '            {',
+        '                uint32_t src = ctx->r[0];',
+        '                uint32_t dst = ctx->r[1];',
+        '                uint32_t control = ctx->r[2];',
+        '                uint32_t count = control & 0x1FFFFF;',
+        '                bool is_fill = (control & (1 << 24)) != 0;',
+        '                for (uint32_t i = 0; i < count; i++) {',
+        '                    uint32_t val = mem_read32(ctx, is_fill ? src : (src + i * 4));',
+        '                    mem_write32(ctx, dst + i * 4, val);',
+        '                }',
+        '            }',
+        '            break;',
+        '        default:',
+        '            break;',
+        '    }',
         '}',
         '',
         '/* Basic Block Prototypes */',

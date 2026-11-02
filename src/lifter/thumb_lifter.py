@@ -306,6 +306,124 @@ class ThumbLifter:
                     "c_code": f"ctx->r[{rd}] = ctx->r[{rn}] {sign} {op2}; ctx->flag_z = (ctx->r[{rd}] == 0);"
                 })
 
+            # 12. Move Shifted Register: LSL / LSR / ASR immediate (Format 1: 0x0000 - 0x17FF)
+            elif (raw & 0xE000) == 0x0000 and (raw & 0xF800) != 0x1800:
+                sub_op = (raw >> 11) & 0x3
+                offset5 = (raw >> 6) & 0x1F
+                rs = (raw >> 3) & 0x7
+                rd = raw & 0x7
+                if sub_op == 0:  # LSL
+                    c = f"ctx->r[{rd}] = ctx->r[{rs}] << {offset5};" if offset5 else f"ctx->r[{rd}] = ctx->r[{rs}];"
+                    ir_ops.append({
+                        "pc": instr_pc,
+                        "op": "LSL_IMM",
+                        "c_code": f"{c} ctx->flag_z = (ctx->r[{rd}] == 0);"
+                    })
+                elif sub_op == 1:  # LSR
+                    shift_val = offset5 if offset5 else 32
+                    ir_ops.append({
+                        "pc": instr_pc,
+                        "op": "LSR_IMM",
+                        "c_code": f"ctx->r[{rd}] = ctx->r[{rs}] >> {shift_val}; ctx->flag_z = (ctx->r[{rd}] == 0);"
+                    })
+                elif sub_op == 2:  # ASR
+                    shift_val = offset5 if offset5 else 32
+                    ir_ops.append({
+                        "pc": instr_pc,
+                        "op": "ASR_IMM",
+                        "c_code": f"ctx->r[{rd}] = (uint32_t)((int32_t)ctx->r[{rs}] >> {shift_val}); ctx->flag_z = (ctx->r[{rd}] == 0);"
+                    })
+
+            # 13. ALU Operations (Format 4: 0x4000 - 0x43FF)
+            elif (raw & 0xFC00) == 0x4000:
+                alu_op = (raw >> 6) & 0xF
+                rs = (raw >> 3) & 0x7
+                rd = raw & 0x7
+                alu_handlers = {
+                    0:  ("AND_REG", f"ctx->r[{rd}] &= ctx->r[{rs}]; ctx->flag_z = (ctx->r[{rd}] == 0);"),
+                    1:  ("EOR_REG", f"ctx->r[{rd}] ^= ctx->r[{rs}]; ctx->flag_z = (ctx->r[{rd}] == 0);"),
+                    2:  ("LSL_REG", f"ctx->r[{rd}] <<= (ctx->r[{rs}] & 0xFF); ctx->flag_z = (ctx->r[{rd}] == 0);"),
+                    3:  ("LSR_REG", f"ctx->r[{rd}] >>= (ctx->r[{rs}] & 0xFF); ctx->flag_z = (ctx->r[{rd}] == 0);"),
+                    4:  ("ASR_REG", f"ctx->r[{rd}] = (uint32_t)((int32_t)ctx->r[{rd}] >> (ctx->r[{rs}] & 0xFF)); ctx->flag_z = (ctx->r[{rd}] == 0);"),
+                    5:  ("ADC_REG", f"ctx->r[{rd}] += ctx->r[{rs}]; ctx->flag_z = (ctx->r[{rd}] == 0);"),
+                    6:  ("SBC_REG", f"ctx->r[{rd}] -= ctx->r[{rs}]; ctx->flag_z = (ctx->r[{rd}] == 0);"),
+                    7:  ("ROR_REG", f"{{ uint32_t s = ctx->r[{rs}] & 0x1F; if (s) ctx->r[{rd}] = (ctx->r[{rd}] >> s) | (ctx->r[{rd}] << (32 - s)); ctx->flag_z = (ctx->r[{rd}] == 0); }}"),
+                    8:  ("TST_REG", f"ctx->flag_z = ((ctx->r[{rd}] & ctx->r[{rs}]) == 0);"),
+                    9:  ("NEG_REG", f"ctx->r[{rd}] = (uint32_t)(-(int32_t)ctx->r[{rs}]); ctx->flag_z = (ctx->r[{rd}] == 0);"),
+                    10: ("CMP_REG", f"ctx->flag_z = (ctx->r[{rd}] == ctx->r[{rs}]);"),
+                    11: ("CMN_REG", f"ctx->flag_z = ((ctx->r[{rd}] + ctx->r[{rs}]) == 0);"),
+                    12: ("ORR_REG", f"ctx->r[{rd}] |= ctx->r[{rs}]; ctx->flag_z = (ctx->r[{rd}] == 0);"),
+                    13: ("MUL_REG", f"ctx->r[{rd}] *= ctx->r[{rs}]; ctx->flag_z = (ctx->r[{rd}] == 0);"),
+                    14: ("BIC_REG", f"ctx->r[{rd}] &= ~ctx->r[{rs}]; ctx->flag_z = (ctx->r[{rd}] == 0);"),
+                    15: ("MVN_REG", f"ctx->r[{rd}] = ~ctx->r[{rs}]; ctx->flag_z = (ctx->r[{rd}] == 0);"),
+                }
+                op_name, op_c = alu_handlers.get(alu_op, ("ALU_THUMB", f"/* alu {alu_op} */"))
+                ir_ops.append({"pc": instr_pc, "op": op_name, "c_code": op_c})
+
+            # 14. SP-relative Load / Store: LDR / STR Rd, [SP, #imm8] (Format 11: 0x9000 - 0x9FFF)
+            elif (raw & 0xF000) == 0x9000:
+                is_load = bool(raw & 0x0800)
+                rd = (raw >> 8) & 0x7
+                imm8 = (raw & 0xFF) << 2
+                if is_load:
+                    ir_ops.append({
+                        "pc": instr_pc,
+                        "op": "LDR_SP",
+                        "c_code": f"ctx->r[{rd}] = mem_read32(ctx, ctx->r[13] + {imm8});"
+                    })
+                else:
+                    ir_ops.append({
+                        "pc": instr_pc,
+                        "op": "STR_SP",
+                        "c_code": f"mem_write32(ctx, ctx->r[13] + {imm8}, ctx->r[{rd}]);"
+                    })
+
+            # 15. Load Address: ADD Rd, PC/SP, #imm8 (Format 12: 0xA000 - 0xAFFF)
+            elif (raw & 0xF000) == 0xA000:
+                is_sp = bool(raw & 0x0800)
+                rd = (raw >> 8) & 0x7
+                imm8 = (raw & 0xFF) << 2
+                if is_sp:
+                    ir_ops.append({
+                        "pc": instr_pc,
+                        "op": "ADD_SP_IMM",
+                        "c_code": f"ctx->r[{rd}] = ctx->r[13] + {imm8};"
+                    })
+                else:
+                    pc_target = ((instr_pc + 4) & ~2) + imm8
+                    ir_ops.append({
+                        "pc": instr_pc,
+                        "op": "ADD_PC_IMM",
+                        "c_code": f"ctx->r[{rd}] = 0x{pc_target:08X};"
+                    })
+
+            # 16. Multiple Load / Store: LDMIA / STMIA (Format 15: 0xC000 - 0xCFFF)
+            elif (raw & 0xF000) == 0xC000:
+                is_load = bool(raw & 0x0800)
+                rb = (raw >> 8) & 0x7
+                rlist = [i for i in range(8) if (raw & (1 << i))]
+                lines = []
+                for r in rlist:
+                    if is_load:
+                        lines.append(f"ctx->r[{r}] = mem_read32(ctx, ctx->r[{rb}]); ctx->r[{rb}] += 4;")
+                    else:
+                        lines.append(f"mem_write32(ctx, ctx->r[{rb}], ctx->r[{r}]); ctx->r[{rb}] += 4;")
+                ir_ops.append({
+                    "pc": instr_pc,
+                    "op": "LDMIA" if is_load else "STMIA",
+                    "c_code": "\n    ".join(lines) if lines else "/* empty ldm/stm */"
+                })
+
+            # 17. Software Interrupt (SWI): Format 17: 0xDF00
+            elif (raw & 0xFF00) == 0xDF00:
+                swi_num = raw & 0xFF
+                ir_ops.append({
+                    "pc": instr_pc,
+                    "op": "SWI",
+                    "swi": swi_num,
+                    "c_code": f"gba_bios_swi(ctx, 0x{swi_num:02X}); /* swi 0x{swi_num:02X} */"
+                })
+
             else:
                 ir_ops.append({
                     "pc": instr_pc,
