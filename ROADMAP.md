@@ -4,14 +4,16 @@ This document outlines the development milestones, architecture targets, and tas
 
 ---
 
-## 👥 Coworker Task Matrix & Active Ownership (Multi-Agent Swarm)
+## 👥 Unified Terminal Subagent Architecture & Coworker Task Matrix
 
-To accelerate progress across multiple consoles simultaneously, work is distributed across specialized domains:
+To maximize engineering velocity, all coworkers operate concurrently as **in-terminal subagents** managed within the unified CLI session. This local subagent swarm eliminates external session latency, avoids cross-environment lockouts, and divides large architectural milestones into synchronized, non-overlapping development tracks:
 
-| Coworker Session | Primary Domain | Active Focus & Roadmap Ownership |
+| Subagent / Coworker | Primary Domain | Active Focus & Roadmap Ownership |
 | :--- | :--- | :--- |
-| **Coworker 58 (Me)** | **Core Engine, GUI & HAL Architecture** | Cross-platform SDL2 presentation HAL (`src/runtime/sdl_hal.c`), compilation caching, GUI Live Viewport enhancements. |
-| **Coworker cb** | **MIPS Target (N64 & PS1)** | PS1 GTE Coprocessor 2 (`COP2`) geometry engine, N64 RSP/RDP command buffer parsing, SPU audio streaming. |
+| **Subagent 1 (Graphics & HAL)** | **Data Block Reading & Live Windowed Output** | Extracting asset data blocks (tiles, palettes, background maps) from ROMs via `src/core/data_block_reader.py` and blitting decoded framebuffers to the 60 FPS presentation window across GBA, N64, SNES, and PS1. |
+| **Subagent 2 (Roadmap & Release)** | **Architecture Roadmap, Claims & Task Matrix** | Maintaining `ROADMAP.md`, `COORDINATION.md`, milestone release planning, task synchronization, and documentation integrity. |
+| **Subagent 3 (QA & Bug Hunting)** | **Systematic Bug Hunting & Edge-Case Auditing** | Fuzzing instruction lifters, auditing memory bus boundary shims, identifying unhandled opcodes, fixing pointer/integer overflow hazards, and maintaining 100% CI pass rate. |
+| **Coworker cb** | **MIPS Target (N64 & PS1)** | PS1 GTE Coprocessor 2 (`COP2`) 3D geometry engine, N64 RSP/RDP command buffer parsing, SPU audio streaming. |
 | **Coworker 6f** | **ARM Target (GBA & Thumb)** | Full GBA Mode 0/1/2/4 PPU tilemap/bitmap renderers, affine background layers, DirectSound DMA audio. |
 | **Coworker 54** | **SNES Target (65816 & Web)** | SNES Mode 7 affine matrix renderer, SPC700 audio port interface, WebAssembly client-side lifter playground. |
 | **Coworker 69** | **Modding Engine & Asset Pipeline** | Native HD texture replacement hook API, widescreen 16:9/21:9 camera matrix patches, C modding SDK. |
@@ -26,7 +28,7 @@ To accelerate progress across multiple consoles simultaneously, work is distribu
 - [x] **Multi-ISA Instruction Lifters**:
   - **ARM7TDMI**: Full ALU ops, conditional execution, branches (`B`/`BL`), memory transfers (`LDR`/`STR`), ARM/Thumb interworking (`BX`).
   - **Thumb-16**: Arithmetic, immediate operations, shifts (LSL, LSR, ASR), conditional branches, stack operations (`PUSH`/`POP`), hardware `REG_KEYINPUT`.
-  - **MIPS I / III**: R-type, I-type, delay-slot handling, memory operations, branch instructions (`BEQ`, `BNE`, `BLEZ`, `BGTZ`, `JAL`, `JALR`, `JR`).
+  - **MIPS I / III**: R-type, I-type, delay-slot handling, memory operations, branch instructions (`BEQ`, `BNE`, `BLEZ`, `BGTZ`, `JAL`, `JALR`, `JR`), GTE Coprocessor 2 shims.
   - **W65C816S (SNES)**: Banked 24-bit addressing, dynamic accumulator/index register sizing (`REP`/`SEP`), transfers, bitwise, shifts, and stack/direct page operations.
 - [x] **Memory & RAM Leak Remediation**: Bounded header inspection to 128KB, dropping scan peak memory **2,000× from 301.23 MB to 0.15 MB**. Added console log pruning (max 5,000 lines).
 - [x] **Static Jump-Table Recovery Heuristic**: Backward-slicing heuristic in `src/lifter/cfg.py` resolving compiled C `switch` statement tables into known CFG edges across MIPS, ARM, and SNES.
@@ -42,20 +44,23 @@ To accelerate progress across multiple consoles simultaneously, work is distribu
 
 ---
 
-## 🚀 Milestone 2: Interactive Audio/Video HAL & Full Graphics Modes (In Progress)
+## 🚀 Milestone 2: Interactive Audio/Video HAL, Data Block Reading & Window Rendering (In Progress)
 
-### Track A: Cross-Platform SDL2 Presentation HAL & GUI (Coworker 58)
+### Track A: Data Block Reading & Live Windowed Output (Subagent 1 & Coworker 58)
+- [x] **ROM Data Block Translators (`src/core/data_block_reader.py`)**:
+  - Address translation for GBA linear VRAM (`0x08000000`), SNES 24-bit banked LoROM (`0x8000` base), and PS1 2352-byte CD sector offsets.
+- [ ] **Accurate Tilemap & Palette Window Compositing**:
+  - Read raw character tile data blocks and 15-bit BGR palette blocks from ROM and VRAM.
+  - Composite multi-layer tilemaps and active framebuffers directly into the 32-bit RGB display window buffer.
 - [ ] **Cross-Platform C Runtime (`src/runtime/hal.h` & `src/runtime/sdl_hal.c`)**:
   - Unified C HAL interface: `hal_init_window()`, `hal_present_framebuffer()`, `hal_poll_input()`, `hal_sleep_frame()`.
   - Compile-time switch between native Win32 GDI and SDL2 / OpenGL for cross-platform Linux and macOS binaries.
-- [ ] **GUI Live Viewport Recording**:
-  - Add recording button to Tab 5 in `gui.py` to capture live gameplay animations directly to GIF/MP4.
 - [ ] **Compilation Caching Engine**:
   - Cache unchanged basic block C functions to accelerate incremental MSVC/Clang rebuilds.
 
 ### Track B: N64 Reality Coprocessor & PS1 GTE Engine (Coworker cb)
-- [ ] **PS1 GTE (Geometry Transformation Engine) Coprocessor 2**:
-  - Implement basic 3D perspective matrix transformations (`RTPT`, `RTPS`, `NCLIP`, `AVSZ3`).
+- [x] **PS1 GTE (Geometry Transformation Engine) Coprocessor 2**:
+  - Basic 3D perspective matrix transformations (`RTPT`, `RTPS`, `NCLIP`, `AVSZ3`).
 - [ ] **N64 Reality Display Processor (RDP/RSP)**:
   - Command list parser for display list rendering (`G_SETOTHERMODE`, `G_TRI1`, `G_TEXTURE`).
 - [ ] **PS1 & N64 Framebuffer Scanning**:

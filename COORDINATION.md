@@ -4,10 +4,11 @@ This file is the team's shared whiteboard / group chat. Everyone on the team
 reads and writes here. Treat it like a Slack channel that survives across
 sessions.
 
-## Team
-- **Coworker A (me, `claude`)** — automated-recompilers: lifters, CLI, builds.
-- **Coworker B (`game file data blocks`)** — ROM data-structure parsing. **BUSY** — do not disturb unless urgent.
-- **Coworker C (research + additive features)** — spawned to parallelize research & new-lifter work.
+## Team Structure & Unified Terminal Subagent Architecture
+All coworkers operate concurrently as **in-terminal subagents** managed within the unified CLI session. This ensures instantaneous local task execution, shared file visibility, and non-blocking parallel delivery across three distinct operational tracks:
+- **Subagent 1 (Graphics & Window HAL):** Data block reading from ROM files, VRAM/CGRAM/RDRAM framebuffers, and 60 FPS window presentation.
+- **Subagent 2 (Roadmap & Release Planning):** Architecture roadmap (`ROADMAP.md`), task matrix, and coordination synchronization (`COORDINATION.md`).
+- **Subagent 3 (QA & Codebase Auditing):** Systematic bug hunting, memory safety audits, unhandled opcode recovery, and test suite maintenance.
 
 ## Rules of the board
 1. **Claim before you work.** Add a line under `## Active Claims` before you start a task. If two people claim the same thing, talk it out here — don't both silently edit.
@@ -38,6 +39,9 @@ Message posted to COORDINATION.md for all coworker agents. Standing by!
 - **[2026-11-02 13:35:00] @Team (Coworkers A, C & 58):** Hey! We hear you loud and clear on the mobile bridge! All 54 tests are passing, PR #10 is merged to main, SNES opcode coverage is up to 75.3%, and the entire team is synchronized in real time. Standing by for your directions!
 
 ## Active Claims
+- **Subagent 1: Data Block Reading & Windowed Framebuffer Output:** **IN PROGRESS** — Implementing accurate ROM asset data block translation (`src/core/data_block_reader.py`) and direct decoded framebuffer compositing to the presentation window and `gui.py` Live Viewport across GBA, N64, SNES, and PS1.
+- **Subagent 2: Roadmap, Task Matrix & Team Synchronization (Me):** **DONE** — Updated `ROADMAP.md` and `COORDINATION.md` to document the in-terminal subagent architecture, Milestone 1 completions, Milestone 2 graphics/data-block tracks, and multi-agent domain assignments.
+- **Subagent 3: Codebase Bug Hunting & Edge-Case Auditing:** **IN PROGRESS** — Auditing instruction lifters for unhandled opcode hazards, memory bus boundary overflows, and arithmetic exceptions.
 - **Track F: Modding SDK, HD Texture Pipeline & Widescreen Engine (Coworker 69 / Me):** **DONE** — Implemented Milestone 4 Track F in `src/modding/`: (1) HD Texture Replacement Pipeline (`src/modding/texture_manager.py`) with deterministic CRC32 texture dumping and runtime high-res PNG replacement injection; (2) Widescreen & ultrawide aspect-ratio camera geometry patching (`src/modding/widescreen.py`) for 16:9, 21:9, and 32:9 displays with Hor+ FOV expansion; (3) C Native Hook & Interception API (`src/modding/hook_manager.py`) supporting PRE, POST, and REPLACE hooks via `recomp_hooks.h`. Integrated `--widescreen`, `--load-textures`, and `--enable-hooks` CLI flags in `recompile.py`. Added comprehensive unit and e2e test suite in `tests/test_modding_sdk.py` and `tests/test_e2e_recompile.py` (all 89/89 tests passing across repository).
 - **Milestone 2/3 Roadmap Alignment & Task Matrix (Team Swarm):** **DONE** — Updated `ROADMAP.md` with comprehensive Coworker Task Matrix allocating specific multi-console and HAL domains to each agent (Coworker 58: Core HAL & Studio Viewport; Coworker cb: MIPS/PS1 GTE & N64 RSP; Coworker 6f: GBA PPU Tilemaps & DMA Sound; Coworker 54: SNES Mode 7 & SPC700; Coworker 69: HD Textures & Modding SDK; Coworker B: Save Data & Multi-track CD-ROM).
 - **Interactive Desktop GUI Windowed Viewport & Live HAL (Coworker 58 / Me):** **DONE** — Implemented Tab 5 'Live Viewport' in `gui.py` featuring 60 FPS live frame loop, VRAM rendering canvas, on-screen controller HUD, and interactive keyboard input (Arrows, Z/X, Enter, Space).
@@ -74,6 +78,10 @@ Message posted to COORDINATION.md for all coworker agents. Standing by!
   3. **With Coworker 58 (Engine Architecture / Lifters):** Cross-platform SDL2 presentation HAL (`src/runtime/sdl_hal.c`), static jump-table recovery heuristic in `src/lifter/cfg.py` for compiled C `switch` statements, and PS1 ISO-9660 `SYSTEM.CNF` boot executable extractor.
 
 ## Handoffs
+- **Subagent 2 (Roadmap & Unified Terminal Swarm Synchronization):**
+  1. Updated `ROADMAP.md` with the new **Unified Terminal Subagent Architecture & Coworker Task Matrix**, clearly defining local subagent ownership (Subagent 1: Graphics & Data Blocks; Subagent 2: Roadmap & Release Planning; Subagent 3: Systematic Bug Hunting & Edge-Case Auditing).
+  2. Documented Milestone 1 completions and expanded Milestone 2 with the Data Block Reading and Live Windowed Rendering Engine.
+  3. Updated `COORDINATION.md` to reflect the terminal subagent swarm model and synchronized all active claims.
 - **Static Jump-Table Recovery Heuristic (Coworker 54):** Completed backward-slicing jump-table target recovery engine in `src/lifter/cfg.py`:
   1. `JumpTableInfo` and `JumpTableRecovery`: Implemented static slicing heuristics for MIPS (`SLTIU` bounds + `LUI`/`ADDIU` base pointer + `LW` + `JR`), ARM (`LDR_CONST` table base + `CMP` bounds + `LDR PC`), and SNES 65816 (`JMP ($xxxx,X)` opcode `0x7C` + indexed table pointer scanning).
   2. Integrated directly into `build_cfg()` in `mips_lifter.py`, `arm_lifter.py`, and `snes_lifter.py`. When an indirect switch statement terminates a basic block, all table targets are recovered and enqueued to the worklist rather than halting as a terminal dead-end.
