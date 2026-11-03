@@ -137,3 +137,21 @@ def test_scan_roms_directory(capsys):
     scan_roms_directory("roms")
     captured = capsys.readouterr()
     assert "Scanning 'roms' for game ROMs..." in captured.out
+
+
+def test_detect_snes_smc_header():
+    from src.core.rom_detector import detect_snes
+    # Create synthetic SNES ROM with 512-byte copier header (64KB + 512B)
+    rom = bytearray(512 + 0x10000)
+    # Header at 512 + 0x7FC0 = 0x81C0
+    h_offset = 512 + 0x7FC0
+    rom[h_offset:h_offset+21] = b"SUPER MARIO WORLD    "
+    rom[h_offset + 0x15] = 0x20  # LoROM map mode
+    struct.pack_into("<H", rom, h_offset + 0x3C, 0x8000)  # Reset vector
+
+    info = detect_snes(bytes(rom))
+    assert info is not None
+    assert info["console"] == "Super Nintendo (SNES)"
+    assert info["entry_point"] == "0x8000"
+    assert "SUPER MARIO" in info["title"]
+

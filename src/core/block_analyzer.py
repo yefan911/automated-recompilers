@@ -163,38 +163,54 @@ class BlockDataAnalyzer:
             self.entry_vram = 0
 
     def print_structural_blocks(self):
-        """Displays the major architectural blocks in an N64 ROM."""
+        """Displays the major architectural blocks in the ROM."""
         print(f"\n========================================================")
         print(f"  STRUCTURAL ROM BLOCK BREAKDOWN: {os.path.basename(self.filepath)}")
         print(f"  Total ROM Size: {self.size:,} bytes ({self.size / (1024*1024):.1f} MB)")
         print(f"========================================================")
 
-        # Block 1: Header (0x0000 - 0x0040)
-        magic = self.data[:4]
-        title = self.data[0x20:0x34].decode('latin-1', errors='ignore').strip('\x00').strip()
-        entry_point = struct.unpack(">I", self.data[0x08:0x0C])[0]
-        crc1 = struct.unpack(">I", self.data[0x10:0x14])[0]
-        crc2 = struct.unpack(">I", self.data[0x14:0x18])[0]
+        if self.is_n64 and len(self.data) >= 0x40:
+            magic = self.data[:4]
+            title = self.data[0x20:0x34].decode('latin-1', errors='ignore').strip('\x00').strip()
+            entry_point = struct.unpack(">I", self.data[0x08:0x0C])[0]
+            crc1 = struct.unpack(">I", self.data[0x10:0x14])[0]
+            crc2 = struct.unpack(">I", self.data[0x14:0x18])[0]
 
-        print(f"\n[BLOCK 0] ROM Header (0x000000 - 0x00003F, 64 bytes)")
-        print(f"  * Magic Endianness : {magic.hex(' ')} (Big-Endian N64 .z64)")
-        print(f"  * Internal Title   : \"{title}\"")
-        print(f"  * Entry Vector VRAM: 0x{entry_point:08X}")
-        print(f"  * Checksums (CRC)  : CRC1=0x{crc1:08X}, CRC2=0x{crc2:08X}")
+            print(f"\n[BLOCK 0] ROM Header (0x000000 - 0x00003F, 64 bytes)")
+            print(f"  * Magic Endianness : {magic.hex(' ')} (Big-Endian N64 .z64)")
+            print(f"  * Internal Title   : \"{title}\"")
+            print(f"  * Entry Vector VRAM: 0x{entry_point:08X}")
+            print(f"  * Checksums (CRC)  : CRC1=0x{crc1:08X}, CRC2=0x{crc2:08X}")
 
-        # Block 2: IPL3 Bootloader (0x0040 - 0x0FFF, 4,032 bytes)
-        ipl3_data = self.data[0x40:0x1000]
-        ipl3_entropy = shannon_entropy(ipl3_data)
-        print(f"\n[BLOCK 1] IPL3 Bootloader (0x000040 - 0x000FFF, 4,032 bytes)")
-        print(f"  * Function         : Hardware initialization, CIC security check, memory DMA")
-        print(f"  * Shannon Entropy  : {ipl3_entropy:.3f} bits/byte (High-density MIPS code)")
+            if len(self.data) >= 0x1000:
+                ipl3_data = self.data[0x40:0x1000]
+                ipl3_entropy = shannon_entropy(ipl3_data)
+                print(f"\n[BLOCK 1] IPL3 Bootloader (0x000040 - 0x000FFF, 4,032 bytes)")
+                print(f"  * Function         : Hardware initialization, CIC security check, memory DMA")
+                print(f"  * Shannon Entropy  : {ipl3_entropy:.3f} bits/byte (High-density MIPS code)")
 
-        # Block 3: Main Program Entry Block (0x1000+)
-        entry_code = self.data[0x1000:0x2000]
-        entry_entropy = shannon_entropy(entry_code)
-        print(f"\n[BLOCK 2] Main Code Entry Segment (0x001000+, loads at 0x{entry_point:08X})")
-        print(f"  * Function         : BSS clear loop, OS initialization, main thread bootstrap")
-        print(f"  * Shannon Entropy  : {entry_entropy:.3f} bits/byte (Executable MIPS Instructions)")
+            if len(self.data) >= 0x2000:
+                entry_code = self.data[0x1000:0x2000]
+                entry_entropy = shannon_entropy(entry_code)
+                print(f"\n[BLOCK 2] Main Code Entry Segment (0x001000+, loads at 0x{entry_point:08X})")
+                print(f"  * Function         : BSS clear loop, OS initialization, main thread bootstrap")
+                print(f"  * Shannon Entropy  : {entry_entropy:.3f} bits/byte (Executable MIPS Instructions)")
+
+        elif self.is_gba and len(self.data) >= 0xC0:
+            title = self.data[0xA0:0xAC].decode('ascii', errors='ignore').strip('\x00').strip()
+            game_code = self.data[0xAC:0xB0].decode('ascii', errors='ignore').strip('\x00').strip()
+            print(f"\n[BLOCK 0] GBA ROM Header (0x000000 - 0x0000BF, 192 bytes)")
+            print(f"  * Architecture     : ARM7TDMI (32-bit ARM + 16-bit Thumb)")
+            print(f"  * Internal Title   : \"{title}\"")
+            print(f"  * Game Serial Code : \"{game_code}\"")
+            print(f"  * Entry Vector VRAM: 0x08000000")
+            header_entropy = shannon_entropy(self.data[:0xC0])
+            print(f"  * Header Entropy   : {header_entropy:.3f} bits/byte")
+        else:
+            header_bytes = self.data[:min(64, self.size)]
+            print(f"\n[BLOCK 0] Raw Image Header (First {len(header_bytes)} bytes)")
+            print(f"  * Magic Hex        : {header_bytes[:16].hex(' ')}")
+            print(f"  * Shannon Entropy  : {shannon_entropy(header_bytes):.3f} bits/byte")
 
     def inspect_hex_block(self, offset: int, length: int = 64):
         """Prints a detailed hex and ASCII view of a block of bytes."""

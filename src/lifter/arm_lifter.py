@@ -176,11 +176,14 @@ class ArmLifter:
                     elif shift_type == 0:  # LSL
                         op2_str = f"(ctx->r[{rm}] << {shift_amount})"
                     elif shift_type == 1:  # LSR
-                        op2_str = f"(ctx->r[{rm}] >> {shift_amount})"
+                        op2_str = f"(ctx->r[{rm}] >> {shift_amount})" if shift_amount else "0"
                     elif shift_type == 2:  # ASR
-                        op2_str = f"((int32_t)ctx->r[{rm}] >> {shift_amount})"
-                    else:  # ROR
-                        op2_str = f"((ctx->r[{rm}] >> {shift_amount}) | (ctx->r[{rm}] << (32 - {shift_amount})))"
+                        op2_str = f"((int32_t)ctx->r[{rm}] >> {shift_amount})" if shift_amount else f"(((int32_t)ctx->r[{rm}] < 0) ? 0xFFFFFFFF : 0)"
+                    else:  # ROR (or RRX if shift_amount == 0)
+                        if shift_amount == 0:
+                            op2_str = f"((ctx->r[{rm}] >> 1) | (((ctx->cpsr >> 29) & 1) << 31))"
+                        else:
+                            op2_str = f"((ctx->r[{rm}] >> {shift_amount}) | (ctx->r[{rm}] << (32 - {shift_amount})))"
 
                 alu_map = {
                     0x0: ("AND", f"ctx->r[{rd}] = ctx->r[{rn}] & {op2_str};"),
@@ -684,21 +687,24 @@ def lift_rom_to_c(rom_path: str, entry_point: int = 0x08000000, max_blocks: int 
         '                    int px = (x + hofs) & 0xFF;',
         '                    int tx = px / 8;',
         '                    int fine_x = px % 8;',
-        '                    uint16_t tile_entry = *(uint16_t*)&ctx->vram[sbb + (ty * 32 + tx) * 2];',
+        '                    uint32_t map_addr = (sbb + (ty * 32 + tx) * 2) % (sizeof(ctx->vram) - 1);',
+        '                    uint16_t tile_entry = *(uint16_t*)&ctx->vram[map_addr];',
         '                    uint16_t tile_id = tile_entry & 0x3FF;',
         '                    uint8_t pal_idx = (tile_entry >> 12) & 0xF;',
         '                    ',
         '                    if (is_8bpp) {',
-        '                        uint8_t color_idx = ctx->vram[cbb + tile_id * 64 + fine_y * 8 + fine_x];',
+        '                        uint32_t tile_off = (cbb + tile_id * 64 + fine_y * 8 + fine_x) % sizeof(ctx->vram);',
+        '                        uint8_t color_idx = ctx->vram[tile_off];',
         '                        if (color_idx != 0) {',
         '                            uint16_t c = pal[color_idx];',
         '                            screen_buffer[y * 240 + x] = (((c & 0x1F) << 3) << 16) | ((((c >> 5) & 0x1F) << 3) << 8) | (((c >> 10) & 0x1F) << 3);',
         '                        }',
         '                    } else {',
-        '                        uint8_t byte_val = ctx->vram[cbb + tile_id * 32 + fine_y * 4 + (fine_x / 2)];',
+        '                        uint32_t tile_off = (cbb + tile_id * 32 + fine_y * 4 + (fine_x / 2)) % sizeof(ctx->vram);',
+        '                        uint8_t byte_val = ctx->vram[tile_off];',
         '                        uint8_t color_idx = (fine_x % 2 == 0) ? (byte_val & 0xF) : ((byte_val >> 4) & 0xF);',
         '                        if (color_idx != 0) {',
-        '                            uint16_t c = pal[pal_idx * 16 + color_idx];',
+        '                            uint16_t c = pal[(pal_idx * 16 + color_idx) & 0xFF];',
         '                            screen_buffer[y * 240 + x] = (((c & 0x1F) << 3) << 16) | ((((c >> 5) & 0x1F) << 3) << 8) | (((c >> 10) & 0x1F) << 3);',
         '                        }',
         '                    }',

@@ -57,7 +57,9 @@ class DataBlockReader(ABC):
 
 class GbaReader(DataBlockReader):
     def vram_to_offset(self, vram: int) -> Optional[int]:
-        if 0x08000000 <= vram < 0x0A000000:
+        # GBA Game Pak ROM is mapped at 0x08000000..0x09FFFFFF,
+        # with waitstate mirrors at 0x0A000000..0x0BFFFFFF and 0x0C000000..0x0DFFFFFF
+        if 0x08000000 <= vram < 0x0E000000:
             off = vram & 0x01FFFFFF
             return off if off < self.file_size else None
         return None
@@ -67,7 +69,9 @@ class SnesLoRomReader(DataBlockReader):
         bank = (vram >> 16) & 0xFF
         addr = vram & 0xFFFF
         if addr < 0x8000: return None
-        off = (bank * 0x8000) + (addr - 0x8000)
+        # In SNES LoROM, banks 0x80..0xFF mirror 0x00..0x7F
+        normalized_bank = bank & 0x7F
+        off = (normalized_bank * 0x8000) + (addr - 0x8000)
         return off if off < self.file_size else None
 
 class Ps1Reader(DataBlockReader):
@@ -98,10 +102,31 @@ class Ps1Reader(DataBlockReader):
             return file_off if file_off < self.file_size else None
         return None
 
+class N64Reader(DataBlockReader):
+    def __init__(self, rom_path: str):
+        super().__init__(rom_path)
+        if len(self.data) >= 0x0C:
+            ep = struct.unpack(">I", self.data[0x08:0x0C])[0]
+            code_offset = 0x1000 if self.file_size > 0x1000 else 0x400
+            self.base_vram = (ep - code_offset) & 0xFFFFFFFF
+        else:
+            self.base_vram = 0x80000000
+
+    def vram_to_offset(self, vram: int) -> Optional[int]:
+        if self.base_vram <= vram < self.base_vram + self.file_size:
+            off = vram - self.base_vram
+            return off if off < self.file_size else None
+        # Cartridge domain: 0x10000000
+        if 0x10000000 <= vram < 0x10000000 + self.file_size:
+            off = vram - 0x10000000
+            return off if off < self.file_size else None
+        return None
+
 def create_block_reader(rom_path: str) -> DataBlockReader:
     ext = os.path.splitext(rom_path)[1].lower()
     if ext == '.gba': return GbaReader(rom_path)
-    if ext == '.sfc': return SnesLoRomReader(rom_path)
+    if ext in ('.sfc', '.smc'): return SnesLoRomReader(rom_path)
+    if ext in ('.z64', '.n64', '.v64'): return N64Reader(rom_path)
     if ext in ('.bin', '.iso', '.exe'): return Ps1Reader(rom_path)
     # Default to linear
     return GbaReader(rom_path)

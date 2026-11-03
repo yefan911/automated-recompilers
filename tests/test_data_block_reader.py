@@ -52,3 +52,21 @@ def test_ps1_reader(tmp_path):
     off = reader.vram_to_offset(reader.text_vram)
     assert off is not None
     assert reader.read_u32(0x8009F838 if "Need for Speed" in rom_path else 0x80010000) == 0x00001021
+
+
+def test_n64_reader(tmp_path):
+    rom_path = "roms/n64/Yoshi.z64"
+    if not os.path.exists(rom_path):
+        import struct
+        hdr = bytearray(0x2000)
+        hdr[:4] = b"\x80\x37\x12\x40"
+        hdr[0x08:0x0C] = struct.pack(">I", 0x80200400)
+        rom_path = str(tmp_path / "test_n64.z64")
+        with open(rom_path, "wb") as f:
+            f.write(hdr)
+
+    reader = create_block_reader(rom_path)
+    # 0x80200400 maps to offset 0x1000
+    off = reader.vram_to_offset(0x80200400)
+    assert off == 0x1000
+

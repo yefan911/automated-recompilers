@@ -677,10 +677,26 @@ class RecompilerGUI(tk.Tk):
             shade = int(25 + 15 * math.sin(math.radians(phase + y * 2)))
             draw.rectangle([0, y, w, y + 8], fill=(shade // 2, shade // 2, shade + 30))
 
+        reader = None
+        if self.current_rom_path and os.path.isfile(self.current_rom_path):
+            try:
+                from src.core.data_block_reader import create_block_reader
+                reader = create_block_reader(self.current_rom_path)
+            except Exception:
+                reader = None
+
         if "Game Boy" in console:
             draw.text((30, 30), f"CONSOLE: Game Boy Advance (ARM7TDMI Mode 3)", fill=(56, 189, 248))
             draw.text((30, 50), f"ROM: {title}", fill=(205, 214, 244))
             draw.text((30, 70), "REG_DISPCNT: 0x0403 (Mode 3 | BG2 Active)", fill=(166, 227, 161))
+
+            # Decode GBA data blocks from reader into viewport
+            if reader:
+                # Read sample tile / framebuffer block from ROM
+                sample_bytes = reader.read_bytes(0x080000C0, 64)
+                if sample_bytes:
+                    draw.text((30, 90), f"Data Block [0x080000C0]: {sample_bytes[:16].hex(' ')}", fill=(166, 173, 200))
+
             bx, by = 360, 240
             if "Up" in self.viewport_keys_pressed or "w" in self.viewport_keys_pressed: by -= 30
             if "Down" in self.viewport_keys_pressed or "s" in self.viewport_keys_pressed: by += 30
@@ -692,10 +708,18 @@ class RecompilerGUI(tk.Tk):
             draw.text((30, 30), f"CONSOLE: Super Nintendo (W65C816S Mode 1)", fill=(192, 132, 252))
             draw.text((30, 50), f"ROM: {title}", fill=(205, 214, 244))
             draw.text((30, 70), "PPU BG1/BG2 Tilemap Active", fill=(166, 227, 161))
+            if reader:
+                snes_hdr = reader.read_bytes(0x008000, 32)
+                if snes_hdr:
+                    draw.text((30, 90), f"LoROM Data Block [0x008000]: {snes_hdr[:16].hex(' ')}", fill=(166, 173, 200))
         else:
             draw.text((30, 30), f"CONSOLE: MIPS Target (N64 / PS1)", fill=(249, 226, 175))
             draw.text((30, 50), f"ROM: {title}", fill=(205, 214, 244))
             draw.text((30, 70), "RDRAM 32-bit Direct Framebuffer Active", fill=(166, 227, 161))
+            if reader:
+                mips_block = reader.read_bytes(getattr(reader, 'text_vram', 0x80000000), 32)
+                if mips_block:
+                    draw.text((30, 90), f"MIPS Data Block: {mips_block[:16].hex(' ')}", fill=(166, 173, 200))
 
         keys_str = " ".join(f"[{k}]" for k in sorted(self.viewport_keys_pressed)) or "[None]"
         draw.text((30, h - 35), f"Active Input: {keys_str}", fill=(249, 226, 175))
@@ -846,7 +870,7 @@ class RecompilerGUI(tk.Tk):
             sample = f.read(min(os.path.getsize(self.current_rom_path), 2097152))
 
         num_slices = 32
-        slice_len = len(sample) // num_slices
+        slice_len = max(1, len(sample) // num_slices)
         slices = []
         for i in range(num_slices):
             chunk = sample[i*slice_len : (i+1)*slice_len]
@@ -1029,7 +1053,7 @@ class RecompilerGUI(tk.Tk):
 
             if success and os.path.isfile(out_exe_path):
                 self.recompiled_exe_path = out_exe_path
-                self.play_btn.config(state="normal", text=f"▶ Run {os.path.basename(out_exe_path)}")
+                self.after(0, lambda p=out_exe_path: self.play_btn.config(state="normal", text=f"▶ Run {os.path.basename(p)}"))
                 self._log("\n========================================================")
                 self._log(f"  SUCCESS: Standalone Binary Built: {out_exe_path}")
                 self._log("========================================================")

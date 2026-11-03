@@ -184,13 +184,14 @@ def detect_nes(data: bytes) -> Optional[Dict[str, Any]]:
 
 def detect_snes(data: bytes) -> Optional[Dict[str, Any]]:
     # Standard SNES header offsets: 0x7FC0 (LoROM), 0xFFC0 (HiROM)
-    for offset in [0x7FC0, 0xFFC0]:
+    # Also check +512 byte offsets for copier/SMC headers (0x81C0, 0x101C0)
+    for offset in [0x7FC0, 0xFFC0, 0x81C0, 0x101C0]:
         if len(data) < offset + 0x50:
             continue
         h = data[offset:offset+0x50]
         # map_mode at offset 0x15 in standard header
         map_mode = h[0x15]
-        if map_mode in (0x20, 0x21, 0x30, 0x31, 0x35):
+        if map_mode in (0x20, 0x21, 0x22, 0x23, 0x25, 0x30, 0x31, 0x32, 0x35):
             title = h[0:21].decode('ascii', errors='ignore').strip()
             # Vectors: Emu RESET vector at 0x3C
             emu_reset = h[0x3C] | (h[0x3D] << 8)

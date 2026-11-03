@@ -219,7 +219,8 @@ class MipsLifter:
 
         # 10. LW
         elif op == 0x23:
-            return {"vram": vram_addr, "asm": f"lw ${MIPS_REG_NAMES[rt]}, {simm}(${MIPS_REG_NAMES[rs]})", "c": f"ctx->r[{rt}] = mips_read32(ctx, ctx->r[{rs}] + ({simm}));"}
+            c_code = f"ctx->r[{rt}] = mips_read32(ctx, ctx->r[{rs}] + ({simm}));" if rt != 0 else f"mips_read32(ctx, ctx->r[{rs}] + ({simm}));"
+            return {"vram": vram_addr, "asm": f"lw ${MIPS_REG_NAMES[rt]}, {simm}(${MIPS_REG_NAMES[rs]})", "c": c_code}
 
         # 11. SW
         elif op == 0x2B:
@@ -227,7 +228,11 @@ class MipsLifter:
 
         # 12. LH / LHU
         elif op == 0x21 or op == 0x25:
-            return {"vram": vram_addr, "asm": f"lh ${MIPS_REG_NAMES[rt]}, {simm}(${MIPS_REG_NAMES[rs]})", "c": f"ctx->r[{rt}] = mips_read16(ctx, ctx->r[{rs}] + ({simm}));"}
+            is_signed = (op == 0x21)
+            mnemonic = "lh" if is_signed else "lhu"
+            val_expr = f"(uint32_t)(int32_t)(int16_t)mips_read16(ctx, ctx->r[{rs}] + ({simm}))" if is_signed else f"mips_read16(ctx, ctx->r[{rs}] + ({simm}))"
+            c_code = f"ctx->r[{rt}] = {val_expr};" if rt != 0 else f"mips_read16(ctx, ctx->r[{rs}] + ({simm}));"
+            return {"vram": vram_addr, "asm": f"{mnemonic} ${MIPS_REG_NAMES[rt]}, {simm}(${MIPS_REG_NAMES[rs]})", "c": c_code}
 
         # 13. SH
         elif op == 0x29:
@@ -235,7 +240,11 @@ class MipsLifter:
 
         # 14. LB / LBU
         elif op == 0x20 or op == 0x24:
-            return {"vram": vram_addr, "asm": f"lb ${MIPS_REG_NAMES[rt]}, {simm}(${MIPS_REG_NAMES[rs]})", "c": f"ctx->r[{rt}] = mips_read8(ctx, ctx->r[{rs}] + ({simm}));"}
+            is_signed = (op == 0x20)
+            mnemonic = "lb" if is_signed else "lbu"
+            val_expr = f"(uint32_t)(int32_t)(int8_t)mips_read8(ctx, ctx->r[{rs}] + ({simm}))" if is_signed else f"mips_read8(ctx, ctx->r[{rs}] + ({simm}))"
+            c_code = f"ctx->r[{rt}] = {val_expr};" if rt != 0 else f"mips_read8(ctx, ctx->r[{rs}] + ({simm}));"
+            return {"vram": vram_addr, "asm": f"{mnemonic} ${MIPS_REG_NAMES[rt]}, {simm}(${MIPS_REG_NAMES[rs]})", "c": c_code}
 
         # 15. SB
         elif op == 0x28:

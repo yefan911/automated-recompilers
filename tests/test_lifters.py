@@ -231,3 +231,49 @@ def test_mips_mult_div_branch_gte():
         assert mnemonic in info["asm"].lower()
         assert info["c"] != ""
 
+
+def test_mips_signed_loads_and_zero_reg():
+    # Test LH vs LHU, LB vs LBU, and zero-register protection
+    raw = [
+        0x84850004,  # lh $a1, 4($a0)  -> signed 16-bit
+        0x94850004,  # lhu $a1, 4($a0) -> unsigned 16-bit
+        0x80850004,  # lb $a1, 4($a0)  -> signed 8-bit
+        0x90850004,  # lbu $a1, 4($a0) -> unsigned 8-bit
+        0x8C800004,  # lw $zero, 4($a0)-> rt=0 ($zero write protection)
+    ]
+    data = struct.pack(f">{len(raw)}I", *raw)
+    lifter = MipsLifter(data, base_vram=0x80000000, is_big_endian=True)
+
+    lh_info = lifter.lift_instruction(0x80000000, raw[0])
+    assert "lh" in lh_info["asm"]
+    assert "(int16_t)" in lh_info["c"]  # signed cast
+
+    lhu_info = lifter.lift_instruction(0x80000004, raw[1])
+    assert "lhu" in lhu_info["asm"]
+    assert "(int16_t)" not in lhu_info["c"]
+
+    lb_info = lifter.lift_instruction(0x80000008, raw[2])
+    assert "lb" in lb_info["asm"]
+    assert "(int8_t)" in lb_info["c"]  # signed cast
+
+    lbu_info = lifter.lift_instruction(0x8000000C, raw[3])
+    assert "lbu" in lbu_info["asm"]
+    assert "(int8_t)" not in lbu_info["c"]
+
+    lw_zero_info = lifter.lift_instruction(0x80000010, raw[4])
+    assert "ctx->r[0]" not in lw_zero_info["c"]  # $zero is not written to
+
+
+def test_arm_lifter_shift_edge_cases():
+    # 0xE1A00021 = mov r0, r1, lsr #0 -> encodes LSR #32 -> 0 in ARM
+    # 0xE1A00041 = mov r0, r1, asr #0 -> encodes ASR #32
+    # 0xE1A00061 = mov r0, r1, ror #0 -> encodes RRX #1
+    raw = [0xE1A00021, 0xE1A00041, 0xE1A00061, 0xEAFFFFFE]
+    rom = struct.pack("<4I", *raw)
+    lifter = ArmLifter(rom, base_vram=0x08000000)
+    ops, _ = lifter.lift_block(0x08000000)
+
+    # Check that no invalid "<< 32" was generated in C code
+    for op in ops:
+        assert "<< 32" not in op["c_code"]
+
