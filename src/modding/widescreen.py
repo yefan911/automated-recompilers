@@ -99,7 +99,9 @@ class WidescreenPatcher:
         """
         Calculates viewport rendering rectangle and pillarbox borders for any target window size.
         """
-        win_aspect = window_width / max(1, window_height)
+        if any(isinstance(value, bool) or not isinstance(value, int) or value <= 0 for value in (window_width, window_height)):
+            raise ValueError("Window dimensions must be positive integers")
+        win_aspect = window_width / window_height
 
         if self.mode == WidescreenMode.PILLARBOX:
             # Fit native aspect into window bounds

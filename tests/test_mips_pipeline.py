@@ -27,7 +27,7 @@ def test_mips_lifter_delay_slot():
     # First instruction in block should be the call
     delay_slot_op = [op for op in ops if op.get("op") == "DELAY_SLOT"]
     assert len(delay_slot_op) >= 1
-    assert "ctx->r[4] = (uint32_t)((int32_t)ctx->r[0] + 42);" in delay_slot_op[0]["c_code"]
+    assert "ctx->r[4] = ctx->r[0] + (uint32_t)(42);" in delay_slot_op[0]["c_code"]
 
 
 def test_mips_lifter_branch_conditional():

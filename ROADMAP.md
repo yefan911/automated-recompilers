@@ -2,11 +2,17 @@
 
 This document outlines the development milestones, architecture targets, and task assignments for the **Automated Game ROM Recompiler**.
 
+## Current implementation status — 2026-11-06
+
+The framework provides ROM inspection, static C generation, and prototype runtimes. The audit on `fix/recompiler-baseline` passes **199 tests on Windows/Python 3.13**, including generated C execution for instruction semantics, cartridge reads, memory bounds, modding helpers, and failure handling. Validation results and the handoff are recorded in [COORDINATION.md](COORDINATION.md).
+
+The studio viewport displays ROM data and native GBA framebuffer snapshots. Continuous guest framebuffer streaming into the studio, accurate graphics across all consoles, host audio, and commercial game playability remain open work. Opcode coverage measures recognized instructions; architectural behavior is checked separately by executing generated C.
+
 ---
 
 ## 👥 Unified Terminal Subagent Architecture & Coworker Task Matrix
 
-To maximize engineering velocity, all coworkers operate concurrently as **in-terminal subagents** managed within the unified CLI session. This local subagent swarm eliminates external session latency, avoids cross-environment lockouts, and divides large architectural milestones into synchronized, non-overlapping development tracks:
+The table records team domains for work that can be assigned to in-terminal subagents. Current task ownership is recorded in `COORDINATION.md`.
 
 | Subagent / Coworker | Primary Domain | Active Focus & Roadmap Ownership |
 | :--- | :--- | :--- |
@@ -21,25 +27,25 @@ To maximize engineering velocity, all coworkers operate concurrently as **in-ter
 
 ---
 
-## 🎯 Milestone 1: Core Recompiler Pipeline & Beta Release (`v0.1.0-beta`) — COMPLETED ✅
+## 🎯 Milestone 1: Prototype Recompiler Pipeline & Beta Release (`v0.1.0-beta`) — Delivered
 
-- [x] **Universal ROM Identification & Header Analysis**: GBA (`.gba`), N64 (`.z64`, `.v64`, `.n64`), PS1 (`PS-X EXE` & ISO-9660 CD images), SNES (LoROM / HiROM), NES.
+- [x] **ROM Identification & Header Analysis**: GBA (`.gba`), N64 (`.z64`, `.v64`, `.n64`), PS1 (`PS-X EXE` & ISO-9660 CD images), SNES (LoROM / HiROM / ExHiROM with copier headers), NES.
 - [x] **Recursive CFG Lifter Engine**: Basic block segmentation, delay slot scheduling (MIPS), spin-loop detection, and worklist deduplication (`collections.deque`).
 - [x] **Multi-ISA Instruction Lifters**:
-  - **ARM7TDMI**: Full ALU ops, conditional execution, branches (`B`/`BL`), memory transfers (`LDR`/`STR`), ARM/Thumb interworking (`BX`).
+  - **ARM7TDMI**: ALU operations and NZCV flags, conditional execution, branches (`B`/`BL`), byte/halfword/word transfers and address writeback, ARM/Thumb interworking (`BX`).
   - **Thumb-16**: Arithmetic, immediate operations, shifts (LSL, LSR, ASR), conditional branches, stack operations (`PUSH`/`POP`), hardware `REG_KEYINPUT`.
   - **MIPS I / III**: R-type, I-type, delay-slot handling, memory operations, branch instructions (`BEQ`, `BNE`, `BLEZ`, `BGTZ`, `JAL`, `JALR`, `JR`), GTE Coprocessor 2 shims.
-  - **W65C816S (SNES)**: Banked 24-bit addressing, dynamic accumulator/index register sizing (`REP`/`SEP`), transfers, bitwise, shifts, and stack/direct page operations.
+  - **W65C816S (SNES)**: Banked cartridge addressing, tracked `REP`/`SEP` widths, binary/decimal arithmetic and flags, transfers, shifts, and guest stack calls. Width changes restored by `PLP` and joins reached with different M/X states still need CFG variants.
 - [x] **Memory & RAM Leak Remediation**: Bounded header inspection to 128KB, dropping scan peak memory **2,000× from 301.23 MB to 0.15 MB**. Added console log pruning (max 5,000 lines).
 - [x] **Static Jump-Table Recovery Heuristic**: Backward-slicing heuristic in `src/lifter/cfg.py` resolving compiled C `switch` statement tables into known CFG edges across MIPS, ARM, and SNES.
 - [x] **PS1 ISO-9660 CD-ROM Boot Extractor**: Sector de-sectoring engine extracting and lifting `PS-X EXE` binaries directly from raw 2352-byte/sector disc images.
-- [x] **Universal Hardware Crash Guards**: Windows SEH (`__try / __except`), `SetUnhandledExceptionFilter`, and memory bounds protection preventing crashes across all consoles.
-- [x] **4-Console Commercial ROM Verification**: Standalone `.exe` binaries compiled and verified running on PC:
+- [x] **Windows Runtime Failure Handling**: MSVC SEH guards return failure from headless GBA, MIPS, and SNES dispatch. Headless MIPS faults print diagnostics without a modal dialog.
+- [x] **Historical Commercial ROM Build and Boot Smoke Checks** (2026-11-02): Standalone binaries compiled and exercised with a limited dispatch budget:
   - 🕹️ **GBA:** `PGATour.exe` (Initializes display controller `REG_DISPCNT = 0x0080`)
   - 🍄 **N64:** `Yoshi.exe` (Runs MIPS III AOT execution loop cleanly)
   - 🌟 **SNES:** `Super Mario All-Stars.exe` (Runs 65816 LoROM execution cleanly)
   - 🏎️ **PS1:** `Need for Speed - Porsche Unleashed.exe` (Runs MIPS I AOT boot loop cleanly)
-- [x] **Desktop Studio GUI & Live Viewport (`gui.py`)**: 5-tab modern studio featuring interactive **60 FPS Live Viewport**, on-screen controller HUD, and Shannon entropy analyzer.
+- [x] **Desktop Studio GUI & ROM Viewport (`gui.py`)**: Five tabs for ROM metadata, recompilation, C inspection, entropy, ROM data preview, and native GBA framebuffer snapshots. Preview images and readers are reused; worker threads queue updates for the Tk thread.
 - [x] **Public Beta Release `v0.1.0-beta`**: Official release published on GitHub with standalone Windows executable and demo walkthroughs.
 
 ---
@@ -49,6 +55,11 @@ To maximize engineering velocity, all coworkers operate concurrently as **in-ter
 ### Track A: Data Block Reading & Live Windowed Output (Subagent 1 & Coworker 58)
 - [x] **ROM Data Block Translators (`src/core/data_block_reader.py`)**:
   - Address translation for GBA linear VRAM (`0x08000000`), SNES 24-bit banked LoROM (`0x8000` base), and PS1 2352-byte CD sector offsets.
+  - N64 dump normalization and PS1 logical reads across Mode 1/Mode 2 sector payload boundaries; SNES LoROM/HiROM/ExHiROM ROM windows exclude RAM and IO.
+- [x] **Native GBA Framebuffer Snapshots**:
+  - Generated binaries support `--headless --framebuffer <file.ppm>`; the studio displays the resulting 240×160 image.
+- [ ] **Continuous Guest Framebuffer Streaming into the Studio**:
+  - Connect a running native guest to the studio viewport and controller input.
 - [ ] **Accurate Tilemap & Palette Window Compositing**:
   - Read raw character tile data blocks and 15-bit BGR palette blocks from ROM and VRAM.
   - Composite multi-layer tilemaps and active framebuffers directly into the 32-bit RGB display window buffer.
@@ -67,18 +78,20 @@ To maximize engineering velocity, all coworkers operate concurrently as **in-ter
   - Scan VRAM display buffers to produce active 3D textured output in the presentation window.
 
 ### Track C: GBA Tilemap PPU & DirectSound Audio (Coworker 6f)
-- [x] **GBA PPU Tilemap Engine (Modes 0, 1, 2)**:
-  - Background tile decoding (`BG0`-`BG3`), palette lookup, and scanline composition into the 240×160 framebuffer.
-- [x] **Affine Transformation Layers**:
-  - Rotscale matrix calculations (`REG_BG2PA`-`REG_BG2PD`) for rotating/scaling backgrounds.
-- [x] **GBA DMA Audio Streaming**:
-  - FIFO sound buffer streaming to host audio via DirectSound FIFO A/B buffer shims (`0x040000A0`).
+- [x] **Prototype GBA Bitmap and Tile Rendering**:
+  - Mode 3 framebuffer conversion is verified by the homebrew snapshot test. Tile and palette rendering paths are present.
+- [ ] **Accurate PPU Composition and Affine Layers**:
+  - Complete background priorities, transparency, affine addressing, sprites, windows, and palette behavior with visual regressions.
+- [ ] **GBA DMA Audio and Host Streaming**:
+  - FIFO A register storage is present. FIFO B, DMA scheduling, mixing, and host audio output remain to be connected.
 
 ### Track D: SNES Mode 7 & SPC700 Sound APU (Coworker 54)
 - [ ] **SNES Mode 7 Affine Matrix Rendering**:
   - Mode 7 perspective scaling and rotation matrix calculation for racing and world-map games.
-- [ ] **SPC700 Sound Coprocessor Shim**:
-  - Emulate 8-bit Sony SPC700 communication ports (`$2140..$2143`) to advance audio-dependent game loops.
+- [x] **Prototype SPC700 Communication Ports**:
+  - `$2140..$2143` storage and the initial `$AA/$BB` IPL handshake are implemented.
+- [ ] **SPC700 Execution and Host Audio**:
+  - Replace the port echo with the APU upload protocol, sound execution, mixing, and audio output.
 - [ ] **WebAssembly In-Browser Lifter**:
   - Compile core lifters to WebAssembly for zero-install browser recompilation on GitHub Pages.
 
@@ -93,23 +106,24 @@ To maximize engineering velocity, all coworkers operate concurrently as **in-ter
   - SNES Battery-Backed SRAM (`ctx->ram` persistent disk synchronization).
 - [ ] **Multi-Track PS1 Disc Parsing**:
   - Full `.cue` cue-sheet parser reading CDDA audio tracks alongside Mode 2 data tracks.
-- [ ] **SNES HiROM / ExHiROM Translators**:
-  - Support high-bank mapping (`$C00000..$FFFFFF`) for commercial titles over 4MB.
+- [x] **SNES HiROM / ExHiROM ROM Address Translators**:
+  - Shared mapping is used by readers, disassembly, and generated cartridge reads, including copier-header removal.
+- [ ] **Commercial Cartridge Compatibility**:
+  - Validate SRAM, special cartridge chips, ROM mirroring, and titles over 4 MiB.
 
 ---
 
 ## 💎 Milestone 4: Native Modding, HD Textures & Widescreen (Coworker 69)
 
 ### Track F: Modding SDK & Visual Enhancement
-- [x] **HD Texture Replacement Pipeline**:
-  - Dump VRAM textures with deterministic CRC32 hashes to disk (`src/modding/texture_manager.py`).
-  - Automatically load high-resolution PNG replacements at runtime (`recomp_lookup_hd_texture`).
-- [x] **Widescreen Camera Geometry Patches**:
-  - Dynamic aspect-ratio adjustment for 16:9, 21:9, and 32:9 ultrawide displays without horizontal stretching (`src/modding/widescreen.py`).
-  - Hor+ FOV expansion factor and 4x4 perspective projection matrix scaling.
-- [x] **C Hook & Interception API (`recomp_hook_function`)**:
-  - Allow C/C++ modders to override or augment internal game functions at native execution speed (`src/modding/hook_manager.py`).
-  - Generates `recomp_hooks.h` with PRE, POST, and REPLACE function hook trampolines.
+- [x] **Texture Catalog and Lookup Helpers**:
+  - Dump supplied texture buffers, load validated pack metadata, and generate `recomp_lookup_hd_texture`. C paths are escaped and malformed manifests fail without partially replacing the catalog.
+- [x] **Widescreen Geometry Helpers**:
+  - Compute aspect ratios, Hor+ FOV multipliers, and projection-matrix scaling for callers in `src/modding/widescreen.py`.
+- [x] **C Hook Header and Trampoline Generation**:
+  - Generate PRE, POST, and REPLACE hooks with validated symbols and priority ordering. Native tests verify the resulting return value.
+- [ ] **Automatic Runtime Mod Integration**:
+  - Connect texture decoding/upload, camera hooks, and hook trampolines to generated guest execution. CLI flags currently emit helper headers; game rendering requires these call sites.
 
 ---
 

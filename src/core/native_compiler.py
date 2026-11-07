@@ -59,7 +59,9 @@ def get_msvc_environment() -> Tuple[Optional[str], Optional[Dict[str, str]]]:
         for line in stdout.splitlines():
             if "=" in line:
                 k, v = line.split("=", 1)
-                env[k] = v
+                # Windows environment names are case-insensitive; vcvars may
+                # emit "Path" even though compiler discovery looks up "PATH".
+                env[k.upper()] = v
 
         cl_path = None
         for p in env.get("PATH", "").split(";"):

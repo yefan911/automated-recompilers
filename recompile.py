@@ -11,6 +11,7 @@ Usage:
 
 import os
 import sys
+import argparse
 
 # Ensure root directory is in sys.path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -52,13 +53,30 @@ def apply_modding_enhancements(c_code: str, console: str, widescreen_ratio=None,
         return "\n\n".join(headers) + "\n\n" + c_code
     return c_code
 
-def main():
-    if len(sys.argv) > 1 and sys.argv[1] in ("--gui", "--ui", "-g"):
+def _main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description="Recompile supported console ROMs to native C and executables.")
+    parser.add_argument("rom", nargs="?", help="ROM file to inspect or recompile")
+    parser.add_argument("--gui", "--ui", "-g", action="store_true")
+    parser.add_argument("--blocks", "-b", "--inspect", action="store_true")
+    parser.add_argument("--no-build", action="store_true")
+    parser.add_argument("--max-blocks", type=int, default=2500)
+    parser.add_argument("--widescreen", nargs="?", const="16:9")
+    parser.add_argument("--load-textures")
+    parser.add_argument("--enable-hooks", action="store_true")
+    options = parser.parse_args(argv)
+    if options.max_blocks < 1:
+        parser.error("--max-blocks must be a positive integer")
+    if options.widescreen:
+        try:
+            AspectRatio.from_string(options.widescreen)
+        except ValueError as error:
+            parser.error(str(error))
+    if options.gui:
         from gui import main as launch_gui
         launch_gui()
-        return
+        return 0
 
-    if len(sys.argv) < 2:
+    if options.rom is None and not (sys.argv[1:] if argv is None else argv):
         print("\n========================================================")
         print("    AUTOMATED GAME ROM RECOMPILER FRAMEWORK")
         print("========================================================\n")
@@ -70,70 +88,42 @@ def main():
         print("    python recompile.py --blocks <rom_path>  # Inspect CFG basic blocks & entropy map")
         print("    python recompile.py <rom_path> --widescreen 16:9    # Apply Hor+ widescreen geometry patch")
         print("    python recompile.py <rom_path> --load-textures <dir> # Inject HD replacement texture pack\n")
-        return
+        return 0
 
     # Check for --blocks flag
-    if sys.argv[1] in ("--blocks", "-b", "--inspect"):
-        if len(sys.argv) < 3:
-            print("Error: Please provide a ROM path after --blocks, e.g.:")
-            print("    python recompile.py --blocks roms/n64/Yoshi.z64")
-            return
-        target = sys.argv[2]
-        analyzer = BlockDataAnalyzer(target)
-        analyzer.print_structural_blocks()
-        analyzer.inspect_hex_block(0x1000, 64)
-        analyzer.disassemble_basic_blocks(0x1000, 0x80200400, max_blocks=3)
-        analyzer.scan_entropy_map(chunk_size=65536, max_chunks=16)
-        return
+    if options.rom is None:
+        print("Error: Please provide a ROM path.")
+        return 2
 
-    no_build = False
-    max_blocks = 2500
-    args = sys.argv[1:]
-    if "--no-build" in args:
-        no_build = True
-        args.remove("--no-build")
+    if options.blocks:
+        if not os.path.isfile(options.rom):
+            print(f"Error: file not found '{options.rom}'")
+            return 1
+        target = options.rom
+        try:
+            analyzer = BlockDataAnalyzer(target)
+            analyzer.print_structural_blocks()
+            analyzer.inspect_hex_block(analyzer.entry_rom_offset or 0, 64)
+            analyzer.disassemble_basic_blocks(max_blocks=3)
+            analyzer.scan_entropy_map(chunk_size=65536, max_chunks=16)
+        except (OSError, ValueError) as error:
+            print(f"Error: {error}")
+            return 1
+        return 0
 
-    # Check for --max-blocks flag
-    if "--max-blocks" in args:
-        idx = args.index("--max-blocks")
-        if idx + 1 < len(args):
-            try:
-                max_blocks = int(args[idx + 1])
-                args.pop(idx + 1)
-                args.pop(idx)
-            except ValueError:
-                pass
-
-    # Modding SDK CLI flags
-    widescreen_ratio = None
-    if "--widescreen" in args:
-        idx = args.index("--widescreen")
-        if idx + 1 < len(args) and not args[idx + 1].startswith("-"):
-            widescreen_ratio = args[idx + 1]
-            args.pop(idx + 1)
-            args.pop(idx)
-        else:
-            widescreen_ratio = "16:9"
-            args.pop(idx)
-
-    texture_pack_dir = None
-    if "--load-textures" in args:
-        idx = args.index("--load-textures")
-        if idx + 1 < len(args):
-            texture_pack_dir = args[idx + 1]
-            args.pop(idx + 1)
-            args.pop(idx)
-
-    enable_hooks = False
-    if "--enable-hooks" in args:
-        enable_hooks = True
-        args.remove("--enable-hooks")
-
-    rom_path = args[0]
+    no_build = options.no_build
+    max_blocks = options.max_blocks
+    widescreen_ratio = options.widescreen
+    texture_pack_dir = options.load_textures
+    enable_hooks = options.enable_hooks
+    if texture_pack_dir and not os.path.isdir(texture_pack_dir):
+        print(f"Error: texture pack directory not found '{texture_pack_dir}'")
+        return 1
+    rom_path = options.rom
     info = inspect_file(rom_path)
     if not info:
         print(f"Error: Could not analyze '{rom_path}'")
-        return
+        return 1
 
     print("\n========================================================")
     print("  [1/4] ROM Identification & Header Analysis")
@@ -179,6 +169,7 @@ def main():
                 print(f"    .{os.sep}{out_exe_path} --window\n")
             else:
                 print("Compilation failed. See compiler output above.")
+                return 1
     elif "Nintendo 64" in console or "PlayStation 1" in console:
         print("\n========================================================")
         print("  [2/4] Recursive Control Flow Graph (CFG) Disassembly (MIPS)")
@@ -210,6 +201,7 @@ def main():
                 print(f"    .{os.sep}{out_exe_path}\n")
             else:
                 print("Compilation failed. See compiler output above.")
+                return 1
     elif "Super Nintendo" in console:
         print("\n========================================================")
         print("  [2/4] Recursive Control Flow Graph (CFG) Disassembly (SNES)")
@@ -241,10 +233,22 @@ def main():
                 print(f"    .{os.sep}{out_exe_path}\n")
             else:
                 print("Compilation failed. See compiler output above.")
+                return 1
     else:
         print(f"\n[Note] Console '{console}' pipeline:")
         print(f"  * Detected entry point: {info.get('entry_point')}")
         print(f"  * Run 'python recompile.py --blocks {rom_path}' to inspect CFG basic blocks.")
+        return 1
+
+    return 0
+
+
+def main(argv=None) -> int:
+    try:
+        return _main(argv)
+    except (OSError, ValueError, RuntimeError) as error:
+        print(f"Error: {error}")
+        return 1
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

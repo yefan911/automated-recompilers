@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from src.lifter.cfg import BasicBlock, ControlFlowGraph, JumpTableRecovery
 from src.lifter.thumb_lifter import ThumbLifter
+from src.lifter.arm_codegen import ARM_FLAG_HELPERS, condition_expr
 
 
 class ArmLifter:
@@ -57,6 +58,7 @@ class ArmLifter:
             instr_pc = pc
             pc += 4
             cond = (raw_instr >> 28) & 0xF
+            op_start = len(ir_ops)
 
             # 1. Branch and Exchange (BX): 0x012FFF10..
             if (raw_instr & 0x0FFFFFF0) == 0x012FFF10:
@@ -70,8 +72,11 @@ class ArmLifter:
                     "pc": instr_pc,
                     "op": "BX",
                     "rm": rm,
-                    "c_code": f"return ctx->r[{rm}]; /* bx r{rm} */"
+                    "c_code": f"if ({condition_expr(cond)}) return ctx->r[{rm}]; /* bx r{rm} */" if cond != 0xE else f"return ctx->r[{rm}]; /* bx r{rm} */"
                 })
+                if cond != 0xE:
+                    targets.append(pc)
+                    ir_ops[-1]["c_code"] += f"\n    return 0x{pc:08X};"
                 break
 
             # 2. Branch / Branch with Link (B / BL): 0x0A000000 / 0x0B000000
@@ -86,15 +91,17 @@ class ArmLifter:
 
                 if is_link:
                     targets.append(target_vram)
+                    targets.append(pc)
                     ir_ops.append({
                         "pc": instr_pc,
                         "op": "CALL",
                         "target": target_vram,
-                        "c_code": f"ctx->r[14] = 0x{instr_pc + 4:08X};\n    recomp_call(ctx, 0x{target_vram:08X});"
+                        "c_code": f"if ({condition_expr(cond)}) {{ ctx->r[14] = 0x{pc:08X}; return 0x{target_vram:08X}; }}\n    return 0x{pc:08X};"
                     })
+                    break
                 else:
                     # Check for self-loop (b .)
-                    if target_vram == instr_pc:
+                    if target_vram == instr_pc and cond == 0xE:
                         ir_ops.append({
                             "pc": instr_pc,
                             "op": "BRANCH",
@@ -113,7 +120,7 @@ class ArmLifter:
                         fallthrough = instr_pc + 4
                         targets.append(target_vram)
                         targets.append(fallthrough)
-                        cond_check = "!ctx->flag_z" if cond == 0x1 else "ctx->flag_z"
+                        cond_check = condition_expr(cond)
                         ir_ops.append({
                             "pc": instr_pc,
                             "op": "COND_BRANCH",
@@ -123,36 +130,53 @@ class ArmLifter:
                         })
                     break
 
-            # 3. Halfword Data Transfer: LDRH / STRH (0x00000090 with bits [7:4] == 0x9 or 0xB)
-            elif (raw_instr & 0x0E000090) == 0x00000090:
+            # Multiply and multiply-accumulate precede halfword transfer decoding.
+            elif (raw_instr & 0x0FC000F0) == 0x00000090:
+                rd = (raw_instr >> 16) & 0xF
+                rn = (raw_instr >> 12) & 0xF
+                rs = (raw_instr >> 8) & 0xF
+                rm = raw_instr & 0xF
+                accumulate = bool(raw_instr & 0x00200000)
+                code = f"ctx->r[{rd}] = ctx->r[{rm}] * ctx->r[{rs}]"
+                code += f" + ctx->r[{rn}];" if accumulate else ";"
+                if raw_instr & 0x00100000:
+                    code += f" arm_set_nz(ctx, ctx->r[{rd}]);"
+                ir_ops.append({"pc": instr_pc, "op": "MLA" if accumulate else "MUL", "rd": rd, "c_code": code})
+
+            # Halfword and signed-byte data transfers.
+            elif (raw_instr & 0x0E000090) == 0x00000090 and raw_instr & 0x60:
                 is_load = bool(raw_instr & 0x00100000)
                 is_imm_offset = bool(raw_instr & 0x00400000)
                 rn = (raw_instr >> 16) & 0xF
                 rd = (raw_instr >> 12) & 0xF
                 is_add = bool(raw_instr & 0x00800000)
                 sign = "+" if is_add else "-"
+                pre_index = bool(raw_instr & 0x01000000)
+                writeback = bool(raw_instr & 0x00200000) or not pre_index
 
                 if is_imm_offset:
                     offset8 = ((raw_instr >> 4) & 0xF0) | (raw_instr & 0xF)
-                    addr_expr = f"ctx->r[{rn}] {sign} {offset8}" if offset8 else f"ctx->r[{rn}]"
+                    offset_expr = str(offset8)
                 else:
                     rm = raw_instr & 0xF
-                    addr_expr = f"ctx->r[{rn}] {sign} ctx->r[{rm}]"
+                    offset_expr = f"ctx->r[{rm}]"
 
+                transfer_type = (raw_instr >> 5) & 3
                 if is_load:
-                    ir_ops.append({
-                        "pc": instr_pc,
-                        "op": "LDRH",
-                        "rd": rd,
-                        "c_code": f"ctx->r[{rd}] = mem_read16(ctx, {addr_expr});"
-                    })
+                    read_expr = ("mem_read16(ctx, address)" if transfer_type == 1
+                                 else "(uint32_t)(int32_t)(int8_t)mem_read8(ctx, address)" if transfer_type == 2
+                                 else "(uint32_t)(int32_t)(int16_t)mem_read16(ctx, address)")
+                    op_name = {1: "LDRH", 2: "LDRSB", 3: "LDRSH"}[transfer_type]
+                    transfer = f"ctx->r[{rd}] = {read_expr};"
                 else:
-                    ir_ops.append({
-                        "pc": instr_pc,
-                        "op": "STRH",
-                        "rd": rd,
-                        "c_code": f"mem_write16(ctx, {addr_expr}, (uint16_t)ctx->r[{rd}]);"
-                    })
+                    op_name = "STRH"
+                    transfer = f"mem_write16(ctx, address, (uint16_t)ctx->r[{rd}]);"
+                code = (f"{{ uint32_t base = ctx->r[{rn}]; uint32_t adjusted = base {sign} ({offset_expr}); "
+                        f"uint32_t address = {'adjusted' if pre_index else 'base'}; {transfer}")
+                if writeback:
+                    code += f" ctx->r[{rn}] = adjusted;"
+                code += " }"
+                ir_ops.append({"pc": instr_pc, "op": op_name, "rd": rd, "c_code": code})
 
             # 4. Data Processing (ALU operations): ADD, SUB, AND, ORR, EOR, CMP, MOV, etc.
             elif (raw_instr & 0x0C000000) == 0x00000000 and (raw_instr & 0x00000090) != 0x00000090:
@@ -171,7 +195,10 @@ class ArmLifter:
                     rm = raw_instr & 0xF
                     shift_type = (raw_instr >> 5) & 0x3
                     shift_amount = (raw_instr >> 7) & 0x1F
-                    if shift_amount == 0 and shift_type == 0:
+                    if raw_instr & 0x10:
+                        shift_reg = (raw_instr >> 8) & 0xF
+                        op2_str = f"arm_shift(ctx, ctx->r[{rm}], {shift_type}, ctx->r[{shift_reg}] & 0xFF, true, false)"
+                    elif shift_amount == 0 and shift_type == 0:
                         op2_str = f"ctx->r[{rm}]"
                     elif shift_type == 0:  # LSL
                         op2_str = f"(ctx->r[{rm}] << {shift_amount})"
@@ -205,8 +232,41 @@ class ArmLifter:
                 }
 
                 op_name, c_code = alu_map[alu_op]
-                if s_bit and alu_op not in (0x8, 0x9, 0xA, 0xB):
-                    c_code += f" ctx->flag_z = (ctx->r[{rd}] == 0);"
+                update_flags = s_bit or alu_op in (0x8, 0x9, 0xA, 0xB)
+                if update_flags:
+                    a = f"ctx->r[{rn}]"
+                    b = op2_str
+                    carry = "((ctx->cpsr >> 29) & 1)"
+                    arithmetic = {
+                        0x2: f"arm_sub(ctx, {a}, {b}, 1, true)",
+                        0x3: f"arm_sub(ctx, {b}, {a}, 1, true)",
+                        0x4: f"arm_add(ctx, {a}, {b}, 0, true)",
+                        0x5: f"arm_add(ctx, {a}, {b}, {carry}, true)",
+                        0x6: f"arm_sub(ctx, {a}, {b}, {carry}, true)",
+                        0x7: f"arm_sub(ctx, {b}, {a}, {carry}, true)",
+                        0xA: f"arm_sub(ctx, {a}, {b}, 1, true)",
+                        0xB: f"arm_add(ctx, {a}, {b}, 0, true)",
+                    }
+                    if alu_op in arithmetic:
+                        c_code = (f"(void){arithmetic[alu_op]};" if alu_op in (0xA, 0xB)
+                                  else f"ctx->r[{rd}] = {arithmetic[alu_op]};")
+                    else:
+                        b = op2_str if is_imm else "arm_operand"
+                        if alu_op in (0x8, 0x9):
+                            operator = "&" if alu_op == 0x8 else "^"
+                            c_code = f"arm_set_nz(ctx, {a} {operator} ({b}));"
+                        else:
+                            expression = {
+                                0x0: f"{a} & ({b})", 0x1: f"{a} ^ ({b})",
+                                0xC: f"{a} | ({b})", 0xD: b,
+                                0xE: f"{a} & ~({b})", 0xF: f"~({b})",
+                            }[alu_op]
+                            c_code = f"ctx->r[{rd}] = {expression}; arm_set_nz(ctx, ctx->r[{rd}]);"
+                        if is_imm and rotate:
+                            c_code += f" ctx->cpsr = (ctx->cpsr & ~0x20000000u) | 0x{(op2_val >> 31) << 29:08X}u;"
+                        elif not is_imm:
+                            shift_count = f"(ctx->r[{(raw_instr >> 8) & 0xF}] & 0xFF)" if raw_instr & 0x10 else str(shift_amount)
+                            c_code = f"{{ uint32_t arm_operand = arm_shift(ctx, ctx->r[{rm}], {shift_type}, {shift_count}, {'true' if raw_instr & 0x10 else 'false'}, true); (void)arm_operand; {c_code} }}"
                 ir_op_entry = {
                     "pc": instr_pc,
                     "op": op_name,
@@ -215,7 +275,15 @@ class ArmLifter:
                 }
                 if is_imm and alu_op == 0xD:
                     ir_op_entry["val"] = op2_val
+                if is_imm and alu_op == 0xA:
+                    ir_op_entry["imm"] = op2_val
                 ir_ops.append(ir_op_entry)
+                if rd == 15 and alu_op not in (0x8, 0x9, 0xA, 0xB):
+                    ir_ops[-1]["c_code"] += " return ctx->r[15] & ~3u;"
+                    if cond != 0xE:
+                        ir_ops[-1]["c_code"] = f"if ({condition_expr(cond)}) {{ {ir_ops[-1]['c_code']} }} return 0x{pc:08X};"
+                        targets.append(pc)
+                    break
 
             # 5. Single Data Transfer: LDR / STR / LDRB / STRB (0x04000000 - 0x07FFFFFF)
             elif (raw_instr & 0x0C000000) == 0x04000000:
@@ -225,64 +293,52 @@ class ArmLifter:
                 is_load = bool(raw_instr & 0x00100000)
                 rn = (raw_instr >> 16) & 0xF
                 rd = (raw_instr >> 12) & 0xF
+                pre_index = bool(raw_instr & 0x01000000)
+                writeback = bool(raw_instr & 0x00200000) or not pre_index
+                offset12 = raw_instr & 0xFFF
+                sign = "+" if is_add else "-"
 
-                if not is_reg_offset:
-                    offset12 = raw_instr & 0xFFF
-                    if rn == 15 and is_load and not is_byte:  # PC-relative load from constant pool
-                        target_addr = (instr_pc + 8 + (offset12 if is_add else -offset12)) & 0xFFFFFFFF
-                        const_val = self.read_u32(target_addr)
-                        ir_ops.append({
-                            "pc": instr_pc,
-                            "op": "LDR_CONST",
-                            "rd": rd,
-                            "val": const_val,
-                            "c_code": f"ctx->r[{rd}] = 0x{const_val:08X}; /* loaded from 0x{target_addr:08X} */"
-                        })
-                    else:
-                        sign = "+" if is_add else "-"
-                        addr_expr = f"ctx->r[{rn}] {sign} {offset12}" if offset12 else f"ctx->r[{rn}]"
-                        if is_load:
-                            op_name = "LDRB" if is_byte else "LDR"
-                            func_call = "mem_read8" if is_byte else "mem_read32"
-                            ir_ops.append({
-                                "pc": instr_pc,
-                                "op": op_name,
-                                "rd": rd,
-                                "c_code": f"ctx->r[{rd}] = {func_call}(ctx, {addr_expr});"
-                            })
-                        else:
-                            op_name = "STRB" if is_byte else "STR"
-                            func_call = "mem_write8" if is_byte else "mem_write32"
-                            val_cast = "(uint8_t)ctx->r" if is_byte else "ctx->r"
-                            ir_ops.append({
-                                "pc": instr_pc,
-                                "op": op_name,
-                                "rd": rd,
-                                "c_code": f"{func_call}(ctx, {addr_expr}, {val_cast}[{rd}]);"
-                            })
+                if rn == 15 and is_load and not is_byte and not is_reg_offset and pre_index and not writeback:
+                    target_addr = (instr_pc + 8 + (offset12 if is_add else -offset12)) & 0xFFFFFFFF
+                    const_val = self.read_u32(target_addr)
+                    entry = {
+                        "pc": instr_pc, "op": "LDR_CONST", "rd": rd, "val": const_val,
+                        "c_code": f"ctx->r[{rd}] = 0x{const_val:08X}; /* loaded from 0x{target_addr:08X} */"
+                    }
+                    if rd == 15 and self.is_valid_vram(const_val & ~3):
+                        targets.append(const_val & ~3)
                 else:
-                    rm = raw_instr & 0xF
-                    sign = "+" if is_add else "-"
-                    addr_expr = f"ctx->r[{rn}] {sign} ctx->r[{rm}]"
+                    offset_expr = str(offset12)
+                    if is_reg_offset:
+                        rm = raw_instr & 0xF
+                        shift_type = (raw_instr >> 5) & 3
+                        shift_count = (raw_instr >> 7) & 0x1F
+                        offset_expr = f"arm_shift(ctx, ctx->r[{rm}], {shift_type}, {shift_count}, false, false)"
+                    code = (f"{{ uint32_t base = ctx->r[{rn}]; uint32_t adjusted = base {sign} ({offset_expr}); "
+                            f"uint32_t address = {'adjusted' if pre_index else 'base'}; ")
                     if is_load:
                         op_name = "LDRB" if is_byte else "LDR"
                         func_call = "mem_read8" if is_byte else "mem_read32"
-                        ir_ops.append({
-                            "pc": instr_pc,
-                            "op": op_name,
-                            "rd": rd,
-                            "c_code": f"ctx->r[{rd}] = {func_call}(ctx, {addr_expr});"
-                        })
+                        code += f"ctx->r[{rd}] = {func_call}(ctx, address);"
                     else:
                         op_name = "STRB" if is_byte else "STR"
                         func_call = "mem_write8" if is_byte else "mem_write32"
-                        val_cast = "(uint8_t)ctx->r" if is_byte else "ctx->r"
-                        ir_ops.append({
-                            "pc": instr_pc,
-                            "op": op_name,
-                            "rd": rd,
-                            "c_code": f"{func_call}(ctx, {addr_expr}, {val_cast}[{rd}]);"
-                        })
+                        value = f"0x{(instr_pc + 12) & 0xFFFFFFFF:08X}u" if rd == 15 else f"ctx->r[{rd}]"
+                        if is_byte:
+                            value = f"(uint8_t)({value})"
+                        code += f"{func_call}(ctx, address, {value});"
+                    if writeback:
+                        code += f" ctx->r[{rn}] = adjusted;"
+                    code += " }"
+                    entry = {"pc": instr_pc, "op": op_name, "rd": rd, "c_code": code}
+                if is_load and rd == 15:
+                    entry["c_code"] += " return ctx->r[15] & ~3u;"
+                    if cond != 0xE:
+                        entry["c_code"] = f"if ({condition_expr(cond)}) {{ {entry['c_code']} }} return 0x{pc:08X};"
+                        targets.append(pc)
+                    ir_ops.append(entry)
+                    break
+                ir_ops.append(entry)
 
             # 6. Software Interrupt (SWI): 0x0F000000
             elif (raw_instr & 0x0F000000) == 0x0F000000:
@@ -312,6 +368,18 @@ class ArmLifter:
                     })
                     break
 
+            for entry in ir_ops[op_start:]:
+                code = entry.get("c_code", "")
+                if cond != 0xE:
+                    entry["c_code"] = f"if ({condition_expr(cond)}) {{ {code} }}"
+        else:
+            targets.append(pc)
+            ir_ops.append({"pc": pc, "op": "FALLTHROUGH", "c_code": f"return 0x{pc:08X}; /* instruction budget */"})
+
+        for entry in ir_ops:
+            if "ctx->r[15]" in entry["c_code"]:
+                entry["c_code"] = f"ctx->r[15] = 0x{(entry['pc'] + 8) & 0xFFFFFFFF:08X}u; " + entry["c_code"]
+
         return ir_ops, targets
 
     def build_cfg(self, entry_vram: int = 0x08000000, max_blocks: int = 2500) -> ControlFlowGraph:
@@ -331,7 +399,7 @@ class ArmLifter:
             is_thumb = bool(raw_vram & 1)
             vram = raw_vram & ~1
 
-            if vram in visited or not self.is_valid_vram(vram):
+            if vram in visited or not (thumb_lifter.is_valid_vram(vram) if is_thumb else self.is_valid_vram(vram)):
                 continue
             visited.add(vram)
 
@@ -343,6 +411,7 @@ class ArmLifter:
                 worklist_targets = targets
 
             # Check for recoverable indirect jump tables
+            jt = None
             if not targets and not is_thumb:
                 jt = JumpTableRecovery.recover_arm_jump_table(ops, self.read_u32)
                 if jt:
@@ -357,7 +426,7 @@ class ArmLifter:
                 is_terminal=len(targets) == 0
             )
 
-            if "jt" in locals() and jt:
+            if not is_thumb and 'jt' in locals() and jt:
                 block.is_indirect = True
                 block.terminator_type = "SWITCH"
                 block.jump_table = jt
@@ -367,7 +436,8 @@ class ArmLifter:
 
             for target in worklist_targets:
                 clean_target = target & ~1
-                if clean_target not in visited and clean_target not in queued and self.is_valid_vram(clean_target):
+                valid_target = thumb_lifter.is_valid_vram(clean_target) if target & 1 else self.is_valid_vram(clean_target)
+                if clean_target not in visited and clean_target not in queued and valid_target:
                     queued.add(clean_target)
                     worklist.append(target)
 
@@ -375,10 +445,18 @@ class ArmLifter:
 
 
 def lift_rom_to_c(rom_path: str, entry_point: int = 0x08000000, max_blocks: int = 2500) -> str:
+    if isinstance(max_blocks, bool) or not isinstance(max_blocks, int) or max_blocks < 1:
+        raise ValueError("max_blocks must be a positive integer")
+    if isinstance(entry_point, bool) or not isinstance(entry_point, int) or not 0 <= entry_point <= 0xFFFFFFFF:
+        raise ValueError("GBA entry point must be an unsigned 32-bit address")
     with open(rom_path, "rb") as f:
-        rom_data = f.read()
-
+        rom_data = f.read(0x02000000 + 1)
+    if not rom_data or len(rom_data) > 0x02000000:
+        raise ValueError("GBA ROM size must be between 1 byte and 32 MiB")
     lifter = ArmLifter(rom_data, base_vram=0x08000000)
+    valid_entry = ThumbLifter(rom_data).is_valid_vram(entry_point & ~1) if entry_point & 1 else lifter.is_valid_vram(entry_point)
+    if not valid_entry:
+        raise ValueError("GBA entry point must lie in mapped cartridge ROM")
     cfg = lifter.build_cfg(entry_point, max_blocks=max_blocks)
 
     c_source = [
@@ -388,6 +466,7 @@ def lift_rom_to_c(rom_path: str, entry_point: int = 0x08000000, max_blocks: int 
         '#include <stdio.h>',
         '#include <stdbool.h>',
         '#include <stdlib.h>',
+        '#include <string.h>',
         '#include <math.h>',
         '',
         '#ifdef _WIN32',
@@ -420,6 +499,9 @@ def lift_rom_to_c(rom_path: str, entry_point: int = 0x08000000, max_blocks: int 
         '',
         '/* Hardware Memory Bus Shims */',
         'static inline uint8_t mem_read8(ArmCpuContext* ctx, uint32_t addr) {',
+        '    if (addr == 0x04000130 || addr == 0x04000131) return (uint8_t)(ctx->keyinput >> ((addr & 1) * 8));',
+        '    if (addr == 0x04000000 || addr == 0x04000001) return (uint8_t)(ctx->dispcnt >> ((addr & 1) * 8));',
+        '    if (addr >= 0x08000000 && addr < 0x0E000000) { uint32_t offset = (addr - 0x08000000) & 0x01FFFFFF; return offset < sizeof(gba_rom) ? gba_rom[offset] : 0; }',
         '    if (addr >= 0x02000000 && addr < 0x02040000) return ctx->ewram[addr - 0x02000000];',
         '    if (addr >= 0x03000000 && addr < 0x03008000) return ctx->iwram[addr - 0x03000000];',
         '    if (addr >= 0x05000000 && addr < 0x05000400) return ctx->pram[addr - 0x05000000];',
@@ -442,11 +524,8 @@ def lift_rom_to_c(rom_path: str, entry_point: int = 0x08000000, max_blocks: int 
         '    if (addr == 0x0400000A) return ctx->bg1cnt;',
         '    if (addr == 0x0400000C) return ctx->bg2cnt;',
         '    if (addr == 0x0400000E) return ctx->bg3cnt;',
-        '    if (addr == 0x04000130) return ctx->keyinput ? ctx->keyinput : 0x03FF;',
-        '    if (addr >= 0x02000000 && addr <= 0x02040000 - 2) return *(uint16_t*)&ctx->ewram[addr - 0x02000000];',
-        '    if (addr >= 0x03000000 && addr <= 0x03008000 - 2) return *(uint16_t*)&ctx->iwram[addr - 0x03000000];',
-        '    if (addr >= 0x05000000 && addr <= 0x05000400 - 2) return *(uint16_t*)&ctx->pram[addr - 0x05000000];',
-        '    if (addr >= 0x06000000 && addr <= 0x06018000 - 2) return *(uint16_t*)&ctx->vram[addr - 0x06000000];',
+        '    if (addr == 0x04000130) return ctx->keyinput;',
+        '    if ((addr >= 0x02000000 && addr <= 0x02040000 - 2) || (addr >= 0x03000000 && addr <= 0x03008000 - 2) || (addr >= 0x05000000 && addr <= 0x05000400 - 2) || (addr >= 0x06000000 && addr <= 0x06018000 - 2) || (addr >= 0x08000000 && addr <= 0x0E000000 - 2)) return (uint16_t)(mem_read8(ctx, addr) | ((uint16_t)mem_read8(ctx, addr + 1) << 8));',
         '    return 0;',
         '}',
         '',
@@ -475,23 +554,19 @@ def lift_rom_to_c(rom_path: str, entry_point: int = 0x08000000, max_blocks: int 
         '    } else if (addr == 0x04000026) {',
         '        ctx->bg2_pd = (int16_t)val;',
         '    } else if (addr >= 0x02000000 && addr <= 0x02040000 - 2) {',
-        '        *(uint16_t*)&ctx->ewram[addr - 0x02000000] = val;',
+        '        mem_write8(ctx, addr, (uint8_t)val); mem_write8(ctx, addr + 1, (uint8_t)(val >> 8));',
         '    } else if (addr >= 0x03000000 && addr <= 0x03008000 - 2) {',
-        '        *(uint16_t*)&ctx->iwram[addr - 0x03000000] = val;',
+        '        mem_write8(ctx, addr, (uint8_t)val); mem_write8(ctx, addr + 1, (uint8_t)(val >> 8));',
         '    } else if (addr >= 0x05000000 && addr <= 0x05000400 - 2) {',
-        '        *(uint16_t*)&ctx->pram[addr - 0x05000000] = val;',
+        '        mem_write8(ctx, addr, (uint8_t)val); mem_write8(ctx, addr + 1, (uint8_t)(val >> 8));',
         '    } else if (addr >= 0x06000000 && addr <= 0x06018000 - 2) {',
-        '        uint32_t offset = addr - 0x06000000;',
-        '        *(uint16_t*)&ctx->vram[offset] = val;',
+        '        mem_write8(ctx, addr, (uint8_t)val); mem_write8(ctx, addr + 1, (uint8_t)(val >> 8));',
         '        ctx->pixels_written++;',
         '    }',
         '}',
         '',
         'static inline uint32_t mem_read32(ArmCpuContext* ctx, uint32_t addr) {',
-        '    if (addr >= 0x02000000 && addr <= 0x02040000 - 4) return *(uint32_t*)&ctx->ewram[addr - 0x02000000];',
-        '    if (addr >= 0x03000000 && addr <= 0x03008000 - 4) return *(uint32_t*)&ctx->iwram[addr - 0x03000000];',
-        '    if (addr >= 0x05000000 && addr <= 0x05000400 - 4) return *(uint32_t*)&ctx->pram[addr - 0x05000000];',
-        '    if (addr >= 0x06000000 && addr <= 0x06018000 - 4) return *(uint32_t*)&ctx->vram[addr - 0x06000000];',
+        '    if ((addr >= 0x02000000 && addr <= 0x02040000 - 4) || (addr >= 0x03000000 && addr <= 0x03008000 - 4) || (addr >= 0x05000000 && addr <= 0x05000400 - 4) || (addr >= 0x06000000 && addr <= 0x06018000 - 4) || (addr >= 0x08000000 && addr <= 0x0E000000 - 4)) return mem_read8(ctx, addr) | ((uint32_t)mem_read8(ctx, addr + 1) << 8) | ((uint32_t)mem_read8(ctx, addr + 2) << 16) | ((uint32_t)mem_read8(ctx, addr + 3) << 24);',
         '    return 0;',
         '}',
         '',
@@ -506,10 +581,9 @@ def lift_rom_to_c(rom_path: str, entry_point: int = 0x08000000, max_blocks: int 
         '        ctx->sound_fifo_a[(ctx->fifo_a_count + 2) & 0x1F] = (int8_t)((val >> 16) & 0xFF);',
         '        ctx->sound_fifo_a[(ctx->fifo_a_count + 3) & 0x1F] = (int8_t)((val >> 24) & 0xFF);',
         '        ctx->fifo_a_count += 4;',
-        '    } else if (addr >= 0x02000000 && addr <= 0x02040000 - 4) *(uint32_t*)&ctx->ewram[addr - 0x02000000] = val;',
-        '    else if (addr >= 0x03000000 && addr <= 0x03008000 - 4) *(uint32_t*)&ctx->iwram[addr - 0x03000000] = val;',
-        '    else if (addr >= 0x05000000 && addr <= 0x05000400 - 4) *(uint32_t*)&ctx->pram[addr - 0x05000000] = val;',
-        '    else if (addr >= 0x06000000 && addr <= 0x06018000 - 4) *(uint32_t*)&ctx->vram[addr - 0x06000000] = val;',
+        '    } else if ((addr >= 0x02000000 && addr <= 0x02040000 - 4) || (addr >= 0x03000000 && addr <= 0x03008000 - 4) || (addr >= 0x05000000 && addr <= 0x05000400 - 4) || (addr >= 0x06000000 && addr <= 0x06018000 - 4)) {',
+        '        mem_write8(ctx, addr, (uint8_t)val); mem_write8(ctx, addr + 1, (uint8_t)(val >> 8)); mem_write8(ctx, addr + 2, (uint8_t)(val >> 16)); mem_write8(ctx, addr + 3, (uint8_t)(val >> 24));',
+        '    }',
         '}',
         '',
         '/* GBA BIOS SWI Emulation Shims */',
@@ -527,27 +601,29 @@ def lift_rom_to_c(rom_path: str, entry_point: int = 0x08000000, max_blocks: int 
         '            break;',
         '        case 0x06: /* Div: r0 / r1 */',
         '            if (ctx->r[1] != 0) {',
-        '                int32_t num = (int32_t)ctx->r[0];',
-        '                int32_t den = (int32_t)ctx->r[1];',
+        '                int64_t num = (int32_t)ctx->r[0];',
+        '                int64_t den = (int32_t)ctx->r[1];',
         '                ctx->r[0] = (uint32_t)(num / den);',
         '                ctx->r[1] = (uint32_t)(num % den);',
-        '                ctx->r[3] = (uint32_t)(abs(num / den));',
+        '                int64_t quotient = num / den; ctx->r[3] = (uint32_t)(quotient < 0 ? -quotient : quotient);',
         '            }',
         '            break;',
         '        case 0x07: /* DivARM: r1 / r0 */',
         '            if (ctx->r[0] != 0) {',
-        '                int32_t num = (int32_t)ctx->r[1];',
-        '                int32_t den = (int32_t)ctx->r[0];',
+        '                int64_t num = (int32_t)ctx->r[1];',
+        '                int64_t den = (int32_t)ctx->r[0];',
         '                ctx->r[0] = (uint32_t)(num / den);',
         '                ctx->r[1] = (uint32_t)(num % den);',
-        '                ctx->r[3] = (uint32_t)(abs(num / den));',
+        '                int64_t quotient = num / den; ctx->r[3] = (uint32_t)(quotient < 0 ? -quotient : quotient);',
         '            }',
         '            break;',
         '        case 0x08: /* Sqrt */',
         '            {',
         '                uint32_t val = ctx->r[0];',
         '                uint32_t root = 0;',
-        '                while ((root + 1) * (root + 1) <= val) root++;',
+        '                uint32_t bit = 1u << 30;',
+        '                while (bit > val) bit >>= 2;',
+        '                while (bit) { if (val >= root + bit) { val -= root + bit; root = (root >> 1) + bit; } else root >>= 1; bit >>= 2; }',
         '                ctx->r[0] = root;',
         '            }',
         '            break;',
@@ -601,14 +677,18 @@ def lift_rom_to_c(rom_path: str, entry_point: int = 0x08000000, max_blocks: int 
         '                uint8_t src_width = mem_read8(ctx, param + 2);',
         '                uint8_t dst_width = mem_read8(ctx, param + 3);',
         '                uint32_t base_offset = mem_read32(ctx, param + 4);',
-        '                if (src_width > 0 && dst_width > 0) {',
-        '                    for (uint16_t i = 0; i < len; i++) {',
+        '                if ((src_width == 1 || src_width == 2 || src_width == 4 || src_width == 8) && (dst_width == 1 || dst_width == 2 || dst_width == 4 || dst_width == 8 || dst_width == 16 || dst_width == 32) && dst_width >= src_width) {',
+        '                    uint32_t packed = 0, bits = 0, out = dst;',
+        '                    uint32_t count = (uint32_t)len * 8 / src_width;',
+        '                    for (uint32_t i = 0; i < count; i++) {',
         '                        uint8_t b = mem_read8(ctx, src + (i * src_width / 8));',
         '                        uint8_t val = (b >> ((i * src_width) % 8)) & ((1 << src_width) - 1);',
-        '                        if (dst_width == 8) mem_write8(ctx, dst + i, (uint8_t)(val + base_offset));',
-        '                        else if (dst_width == 16) mem_write16(ctx, dst + i * 2, (uint16_t)(val + base_offset));',
-        '                        else if (dst_width == 32) mem_write32(ctx, dst + i * 4, val + base_offset);',
+        '                        uint32_t value = val; if (val != 0 || (base_offset & 0x80000000u)) value += base_offset & 0x7FFFFFFFu;',
+        '                        uint32_t mask = dst_width == 32 ? ~0u : ((1u << dst_width) - 1);',
+        '                        packed |= (value & mask) << bits; bits += dst_width;',
+        '                        if (bits == 32) { mem_write32(ctx, out, packed); out += 4; packed = 0; bits = 0; }',
         '                    }',
+        '                    if (bits) mem_write32(ctx, out, packed);',
         '                }',
         '            }',
         '            break;',
@@ -619,6 +699,10 @@ def lift_rom_to_c(rom_path: str, entry_point: int = 0x08000000, max_blocks: int 
         '',
         '/* Basic Block Prototypes */',
     ]
+
+    image = "static const uint8_t gba_rom[] = {\n" + ",\n".join(",".join(f"0x{b:02X}" for b in rom_data[i:i + 32]) for i in range(0, len(rom_data), 32)) + "\n};"
+    c_source.insert(c_source.index('/* Hardware Memory Bus Shims */'), image)
+    c_source.append(ARM_FLAG_HELPERS)
 
     for proto in cfg.emit_prototypes():
         c_source.append(proto)
@@ -634,8 +718,7 @@ def lift_rom_to_c(rom_path: str, entry_point: int = 0x08000000, max_blocks: int 
 
     # Emit Win32 Window Presentation & Main Entry
     c_source.extend([
-        '#ifdef _WIN32',
-        '/* Win32 Presentation Window (Scales GBA 240x160 3x to 720x480) */',
+        '/* Framebuffer conversion shared by snapshots and window presentation. */',
         'static uint32_t screen_buffer[240 * 160];',
         '',
         'void update_screen_from_vram(ArmCpuContext* ctx) {',
@@ -714,6 +797,22 @@ def lift_rom_to_c(rom_path: str, entry_point: int = 0x08000000, max_blocks: int 
         '    }',
         '}',
         '',
+        'static int dump_framebuffer(ArmCpuContext* ctx, const char* path) {',
+        '    update_screen_from_vram(ctx);',
+        '    FILE* output = fopen(path, "wb");',
+        '    if (!output) { perror("Framebuffer output"); return 1; }',
+        '    bool ok = fprintf(output, "P6\\n240 160\\n255\\n") > 0;',
+        '    for (int i = 0; ok && i < 240 * 160; i++) {',
+        '        uint32_t pixel = screen_buffer[i];',
+        '        uint8_t rgb[3] = {(uint8_t)(pixel >> 16), (uint8_t)(pixel >> 8), (uint8_t)pixel};',
+        '        ok = fwrite(rgb, 1, 3, output) == 3;',
+        '    }',
+        '    if (fclose(output) != 0) ok = false;',
+        '    if (!ok) { fprintf(stderr, "Could not write framebuffer\\n"); return 1; }',
+        '    return 0;',
+        '}',
+        '',
+        '#ifdef _WIN32',
         'static volatile bool g_running = true;',
         '',
         'LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {',
@@ -809,36 +908,47 @@ def lift_rom_to_c(rom_path: str, entry_point: int = 0x08000000, max_blocks: int 
         '/* Main Entry / Native Recompiled Executable */',
         'static ArmCpuContext s_ctx;',
         'int main(int argc, char** argv) {',
-        '    (void)argc;',
-        '    (void)argv;',
+        '    const char* framebuffer_path = NULL;',
+        '    bool window = false;',
+        '    for (int i = 1; i < argc; i++) {',
+        '        if (strcmp(argv[i], "--framebuffer") == 0 && i + 1 < argc) framebuffer_path = argv[++i];',
+        '        else if (strcmp(argv[i], "--window") == 0) window = true;',
+        '        else if (strcmp(argv[i], "--headless") == 0) window = false;',
+        '        else if (strcmp(argv[i], "--no-hold") == 0) { /* bounded mode */ }',
+        '        else { fprintf(stderr, "Unknown or incomplete option: %s\\n", argv[i]); return 2; }',
+        '    }',
         '    printf("=== Starting Automated Recompiled Game ===\\n");',
         '    ArmCpuContext* ctx = &s_ctx;',
+        '    ctx->keyinput = 0x03FF;',
+        '    ctx->r[13] = 0x03007F00;',
         '    ',
         f'    uint32_t next_pc = 0x{entry_point:08X};',
         '    int max_cycles = 100000;',
         '#if defined(_MSC_VER) && defined(_WIN32)',
         '    __try {',
+        '#endif',
+        '#ifdef _WIN32',
+        '        if (window) {',
+        '            run_presentation_window(ctx, next_pc);',
+        '        } else',
+        '#else',
+        '        (void)window;',
+        '#endif',
         '        while (max_cycles-- > 0 && next_pc != 0) {',
         '            next_pc = recomp_dispatch(ctx, next_pc);',
         '        }',
+        '#if defined(_MSC_VER) && defined(_WIN32)',
         '    } __except(1) {',
         '        printf("[Crash Guard] Caught hardware exception during GBA execution (code: 0x%08lX)\\n", GetExceptionCode());',
-        '    }',
-        '#else',
-        '    while (max_cycles-- > 0 && next_pc != 0) {',
-        '        next_pc = recomp_dispatch(ctx, next_pc);',
+        '        return 1;',
         '    }',
         '#endif',
         '    ',
         '    printf("=== Recompiled execution finished successfully ===\\n");',
         '    printf("  * REG_DISPCNT  : 0x%04X (Mode %d)\\n", ctx->dispcnt, ctx->dispcnt & 7);',
         '    printf("  * Pixels Drawn : %u pixels written to VRAM\\n", ctx->pixels_written);',
+        '    if (framebuffer_path && dump_framebuffer(ctx, framebuffer_path) != 0) return 1;',
         '    ',
-        '#ifdef _WIN32',
-        '    if (argc > 1 && strcmp(argv[1], "--window") == 0) {',
-        f'        run_presentation_window(ctx, 0x{entry_point:08X});',
-        '    }',
-        '#endif',
         '    return 0;',
         '}',
     ])

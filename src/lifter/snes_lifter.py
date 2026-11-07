@@ -8,18 +8,23 @@ into structured basic blocks and emits C code for the Automated Recompiler Frame
 import os
 import sys
 import struct
+from collections import deque
 from typing import List, Dict, Any, Tuple, Optional
 
 # Ensure project root is on sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from src.lifter.cfg import BasicBlock, ControlFlowGraph, JumpTableRecovery
+from src.core.data_block_reader import snes_vram_to_offset
+from src.core.rom_detector import detect_snes
+from src.lifter.snes_codegen import SNES_CPU_HELPERS
 
 
 class SnesLifter:
-    def __init__(self, rom_bytes: bytes, is_lorom: bool = True):
+    def __init__(self, rom_bytes: bytes, is_lorom: bool = True, mapping: Optional[str] = None):
         self.rom = rom_bytes
-        self.is_lorom = is_lorom
+        self.mapping = mapping or ("LoROM" if is_lorom else "HiROM")
+        self.is_lorom = self.mapping == "LoROM"
 
     def map_address_to_rom_offset(self, addr_24bit: int) -> int:
         """
@@ -28,31 +33,8 @@ class SnesLifter:
         Also handles banks $80-$FF (mirror of $00-$7F in LoROM).
         HiROM Mapping: Bank $40-$7D / $C0-$FF, Offset $0000-$FFFF -> (Bank & 0x3F) << 16 | Offset (or similar).
         """
-        bank = (addr_24bit >> 16) & 0xFF
-        offset = addr_24bit & 0xFFFF
-
-        if self.is_lorom:
-            # LoROM: CPU addresses Bank $00-$7F / $80-$FF, Offset $8000-$FFFF
-            # Physical ROM offset = ((bank & 0x7F) << 15) | (offset & 0x7FFF)
-            # Note: Offset must be >= 0x8000 for standard LoROM mapping, but some games use Bank $00-$3F Offset $0000-$7FFF for WRAM/SRAM.
-            # For ROM mapping:
-            normalized_bank = bank & 0x7F
-            if offset >= 0x8000:
-                rom_off = (normalized_bank << 15) | (offset - 0x8000)
-            else:
-                # Lower half of bank in LoROM typically points to RAM/registers, but if accessed as ROM or unmapped:
-                rom_off = (normalized_bank << 15) | offset  # Fallback
-            return rom_off
-        else:
-            # HiROM Mapping
-            normalized_bank = bank & 0x3F
-            if bank >= 0x40 and bank <= 0x7D:
-                rom_off = ((bank - 0x40) << 16) | offset
-            elif bank >= 0xC0:
-                rom_off = ((bank - 0xC0) << 16) | offset
-            else:
-                rom_off = (normalized_bank << 16) | offset
-            return rom_off
+        offset = snes_vram_to_offset(addr_24bit, len(self.rom), self.mapping)
+        return -1 if offset is None else offset
 
     def is_valid_address(self, addr_24bit: int) -> bool:
         rom_off = self.map_address_to_rom_offset(addr_24bit)
@@ -66,16 +48,92 @@ class SnesLifter:
 
     def read_u16(self, addr_24bit: int) -> int:
         b0 = self.read_u8(addr_24bit)
-        b1 = self.read_u8(addr_24bit + 1)
+        b1 = self.read_u8((addr_24bit & 0xFF0000) | ((addr_24bit + 1) & 0xFFFF))
         return b0 | (b1 << 8)
 
     def read_u24(self, addr_24bit: int) -> int:
         b0 = self.read_u8(addr_24bit)
-        b1 = self.read_u8(addr_24bit + 1)
-        b2 = self.read_u8(addr_24bit + 2)
+        b1 = self.read_u8((addr_24bit & 0xFF0000) | ((addr_24bit + 1) & 0xFFFF))
+        b2 = self.read_u8((addr_24bit & 0xFF0000) | ((addr_24bit + 2) & 0xFFFF))
         return b0 | (b1 << 8) | (b2 << 16)
 
     def lift_instruction(self, pc: int, p_flags: int) -> Tuple[Dict[str, Any], int]:
+        instruction, next_pc = self._decode_instruction(pc, p_flags)
+        op = instruction["op"]
+        m_bits = 8 if p_flags & 0x20 else 16
+        x_bits = 8 if p_flags & 0x10 else 16
+        code = instruction["c_code"]
+
+        if op.startswith(("ADC_", "SBC_", "CMP_")) or op in ("CPX", "CPY"):
+            bits = x_bits if op in ("CPX", "CPY") else m_bits
+            opcode = self.read_u8(pc)
+            if opcode in (0x69, 0xE9, 0xC9, 0xE0, 0xC0):
+                operand_pc = (pc & 0xFF0000) | ((pc + 1) & 0xFFFF)
+                value = self.read_u8(operand_pc) if bits == 8 else self.read_u16(operand_pc)
+                operand = f"0x{value:04X}"
+            else:
+                address = self.read_u16((pc & 0xFF0000) | ((pc + 1) & 0xFFFF))
+                operand = f"snes_read{bits}(ctx, ((uint32_t)ctx->db << 16) | 0x{address:04X})"
+            if op.startswith(("ADC_", "SBC_")):
+                code = f"snes_arithmetic(ctx, {operand}, {bits}, {str(op.startswith('SBC_')).lower()});"
+            else:
+                register = "x" if op == "CPX" else "y" if op == "CPY" else "a"
+                code = f"snes_compare(ctx, ctx->{register}, {operand}, {bits});"
+        elif op in ("ASL", "LSR", "ROL", "ROR"):
+            code = f"snes_shift_accumulator(ctx, {('ASL', 'LSR', 'ROL', 'ROR').index(op)}, {m_bits});"
+        elif op == "BIT" and self.read_u8(pc) == 0x2C:
+            address = self.read_u16((pc & 0xFF0000) | ((pc + 1) & 0xFFFF))
+            code = (f"{{ uint16_t value = snes_read{m_bits}(ctx, ((uint32_t)ctx->db << 16) | 0x{address:04X}); "
+                    f"ctx->p = (uint8_t)((ctx->p & ~0xC2) | ((value >> {m_bits - 8}) & 0xC0) "
+                    "| ((ctx->a & value) == 0 ? 2 : 0)); }")
+        elif op in ("PHA", "PHX", "PHY"):
+            register = {"PHA": "a", "PHX": "x", "PHY": "y"}[op]
+            bits = m_bits if op == "PHA" else x_bits
+            code = f"snes_push{bits}(ctx, (uint{bits}_t)ctx->{register});"
+        elif op in ("PLA", "PLX", "PLY"):
+            register = {"PLA": "a", "PLX": "x", "PLY": "y"}[op]
+            bits = m_bits if op == "PLA" else x_bits
+            value = f"snes_pop{bits}(ctx)"
+            if register == "a" and bits == 8:
+                value = f"(ctx->a & 0xFF00) | {value}"
+            code = f"ctx->{register} = {value}; snes_set_nz(ctx, ctx->{register}, {bits});"
+        elif op in ("PHP", "PHB"):
+            code = f"snes_push8(ctx, ctx->{'p' if op == 'PHP' else 'db'});"
+        elif op == "PLP":
+            code = "snes_set_p(ctx, snes_pop8(ctx));"
+        elif op == "PLB":
+            code = "ctx->db = snes_pop8(ctx); snes_set_nz(ctx, ctx->db, 8);"
+        elif op == "PEA":
+            value = self.read_u16((pc & 0xFF0000) | ((pc + 1) & 0xFFFF))
+            code = f"snes_push16(ctx, 0x{value:04X});"
+        elif op in ("REP", "SEP"):
+            mask = instruction["mask"]
+            expression = f"ctx->p {'& ~' if op == 'REP' else '|'}0x{mask:02X}"
+            code = f"snes_set_p(ctx, (uint8_t)({expression}));"
+        elif op in ("INC", "DEC") and ("addr" in instruction or "zp" in instruction):
+            address = (f"((uint32_t)ctx->db << 16) | 0x{instruction['addr']:04X}" if "addr" in instruction
+                       else f"(ctx->dp + 0x{instruction['zp']:02X}) & 0xFFFF")
+            code = (f"{{ uint32_t address = {address}; uint16_t value = (uint16_t)(snes_read{m_bits}(ctx, address) "
+                    f"{'+' if op == 'INC' else '-'} 1); snes_write{m_bits}(ctx, address, (uint{m_bits}_t)value); "
+                    f"snes_set_nz(ctx, value, {m_bits}); }}")
+        elif op.startswith("LDA") or op in ("TXA", "TYA", "INC", "DEC", "AND", "ORA", "EOR"):
+            code += f" snes_set_nz(ctx, ctx->a, {m_bits});"
+        elif op.startswith("LDX") or op in ("TAX", "TSX", "INX", "DEX"):
+            if x_bits == 8:
+                code += " ctx->x &= 0xFF;"
+            code += f" snes_set_nz(ctx, ctx->x, {x_bits});"
+        elif op.startswith("LDY") or op in ("TAY", "INY", "DEY"):
+            if x_bits == 8:
+                code += " ctx->y &= 0xFF;"
+            code += f" snes_set_nz(ctx, ctx->y, {x_bits});"
+        elif op in ("TCD", "TDC", "TSC"):
+            code += f" snes_set_nz(ctx, ctx->{'dp' if op == 'TCD' else 'a'}, 16);"
+        elif op in ("TXS", "TCS"):
+            code += " if (ctx->e) ctx->sp = (uint16_t)(0x100 | (ctx->sp & 0xFF));"
+        instruction["c_code"] = code
+        return instruction, next_pc
+
+    def _decode_instruction(self, pc: int, p_flags: int) -> Tuple[Dict[str, Any], int]:
         """
         Decodes and lifts a single W65C816 instruction at 24-bit PC with status flags P.
         Returns (instruction_dict, next_pc).
@@ -85,19 +143,20 @@ class SnesLifter:
 
         opcode = self.read_u8(pc)
         instr_pc = pc
-        next_pc = pc + 1
+        bank = pc & 0xFF0000
+        next_pc = bank | ((pc + 1) & 0xFFFF)
 
         # Helper for immediate values based on M/X flags
         def get_imm8() -> int:
             nonlocal next_pc
             val = self.read_u8(next_pc)
-            next_pc += 1
+            next_pc = bank | ((next_pc + 1) & 0xFFFF)
             return val
 
         def get_imm16() -> int:
             nonlocal next_pc
             val = self.read_u16(next_pc)
-            next_pc += 2
+            next_pc = bank | ((next_pc + 2) & 0xFFFF)
             return val
 
         def get_imm_m() -> Tuple[int, int]:
@@ -117,19 +176,19 @@ class SnesLifter:
         def get_abs16() -> int:
             nonlocal next_pc
             val = self.read_u16(next_pc)
-            next_pc += 2
+            next_pc = bank | ((next_pc + 2) & 0xFFFF)
             return val
 
         def get_abs24() -> int:
             nonlocal next_pc
             val = self.read_u24(next_pc)
-            next_pc += 3
+            next_pc = bank | ((next_pc + 3) & 0xFFFF)
             return val
 
         def get_zp8() -> int:
             nonlocal next_pc
             val = self.read_u8(next_pc)
-            next_pc += 1
+            next_pc = bank | ((next_pc + 1) & 0xFFFF)
             return val
 
         # Opcodes
@@ -420,7 +479,7 @@ class SnesLifter:
                 "pc": instr_pc,
                 "op": "JMP_IND",
                 "indirect_addr": addr,
-                "c_code": f"return snes_read16(ctx, (ctx->pb << 16) | 0x{addr:04X}); /* jmp (0x{addr:04X}) */"
+                "c_code": f"return ((uint32_t)ctx->pb << 16) | snes_read16(ctx, 0x{addr:04X}); /* jmp (0x{addr:04X}) */"
             }, next_pc
 
         elif opcode == 0x7C:  # JMP Absolute Indexed Indirect ($xxxx,X) - Switch/Jump Table
@@ -429,7 +488,7 @@ class SnesLifter:
                 "pc": instr_pc,
                 "op": "JMP_IND_X",
                 "indirect_addr": addr,
-                "c_code": f"return snes_read16(ctx, (ctx->pb << 16) | ((0x{addr:04X} + ctx->x) & 0xFFFF)); /* jmp (0x{addr:04X},x) */"
+                "c_code": f"return ((uint32_t)ctx->pb << 16) | snes_read16(ctx, ((uint32_t)ctx->pb << 16) | ((0x{addr:04X} + ctx->x) & 0xFFFF)); /* jmp (0x{addr:04X},x) */"
             }, next_pc
 
         elif opcode == 0x20:  # JSR Absolute
@@ -442,7 +501,7 @@ class SnesLifter:
                 "target": target,
                 "ret_addr": ret_addr,
                 "fallthrough": next_pc,
-                "c_code": f"ctx->sp -= 2; snes_write16(ctx, 0x000000 | ctx->sp, 0x{ret_addr & 0xFFFF:04X});\n    recomp_snes_call(ctx, 0x{target:06X});\n    return 0x{next_pc:06X};"
+                "c_code": f"snes_push16(ctx, 0x{ret_addr & 0xFFFF:04X}); return 0x{target:06X};"
             }, next_pc
 
         elif opcode == 0x22:  # JSL Long (Subroutine)
@@ -455,7 +514,7 @@ class SnesLifter:
                 "target": addr24,
                 "ret_addr": ret_addr,
                 "fallthrough": next_pc,
-                "c_code": f"ctx->sp -= 3;\n    snes_write8(ctx, 0x000000 | ctx->sp, ctx->pb);\n    snes_write16(ctx, 0x000000 | ctx->sp + 1, 0x{ret_addr & 0xFFFF:04X});\n    recomp_snes_call(ctx, 0x{addr24:06X});\n    return 0x{next_pc:06X};"
+                "c_code": f"snes_push8(ctx, ctx->pb); snes_push16(ctx, 0x{ret_addr & 0xFFFF:04X}); ctx->pb = 0x{addr24 >> 16:02X}; return 0x{addr24:06X};"
             }, next_pc
 
         # 8. Returns: RTS ($60), RTL ($6B)
@@ -463,21 +522,21 @@ class SnesLifter:
             return {
                 "pc": instr_pc,
                 "op": "RTS",
-                "c_code": f"{{ uint16_t ret = snes_read16(ctx, 0x000000 | ctx->sp); ctx->sp += 2; return ((ctx->pb << 16) | ret) + 1; }} /* rts */"
+                "c_code": "{ uint16_t ret = snes_pop16(ctx); return ((uint32_t)ctx->pb << 16) | ((ret + 1u) & 0xFFFF); } /* rts */"
             }, next_pc
 
         elif opcode == 0x6B:  # RTL
             return {
                 "pc": instr_pc,
                 "op": "RTL",
-                "c_code": f"{{ uint16_t ret_off = snes_read16(ctx, 0x000000 | ctx->sp + 1); uint8_t ret_bank = snes_read8(ctx, 0x000000 | ctx->sp); ctx->sp += 3; return ((ret_bank << 16) | ret_off) + 1; }} /* rtl */"
+                "c_code": "{ uint16_t ret = snes_pop16(ctx); ctx->pb = snes_pop8(ctx); return ((uint32_t)ctx->pb << 16) | ((ret + 1u) & 0xFFFF); } /* rtl */"
             }, next_pc
 
         # 9. Branch Instructions: BRA ($80), BEQ ($F0), BNE ($D0), BBMI ($30), BBPL ($10), BVC ($50), BVS ($70), BCS ($B0), BCC ($90), BRL ($82)
         elif opcode == 0x82:  # BRL (Branch Long Relative 16-bit)
             rel16 = get_abs16()
             simv = rel16 if rel16 < 0x8000 else rel16 - 0x10000
-            target = (next_pc + simv) & 0xFFFFFF
+            target = bank | ((next_pc + simv) & 0xFFFF)
             return {
                 "pc": instr_pc,
                 "op": "BRL",
@@ -489,7 +548,7 @@ class SnesLifter:
             rel8 = get_imm8()
             # Sign extend 8-bit relative offset
             simv = rel8 if rel8 < 0x80 else rel8 - 0x100
-            target = (next_pc + simv) & 0xFFFFFF
+            target = bank | ((next_pc + simv) & 0xFFFF)
             fallthrough = next_pc
 
             branch_names = {
@@ -498,6 +557,8 @@ class SnesLifter:
                 0xD0: ("BNE", f"if (!(ctx->p & 0x02)) return 0x{target:06X};\n    else return 0x{fallthrough:06X};"),
                 0x30: ("BMI", f"if (ctx->p & 0x80) return 0x{target:06X};\n    else return 0x{fallthrough:06X};"),
                 0x10: ("BPL", f"if (!(ctx->p & 0x80)) return 0x{target:06X};\n    else return 0x{fallthrough:06X};"),
+                0x50: ("BVC", f"if (!(ctx->p & 0x40)) return 0x{target:06X};\n    else return 0x{fallthrough:06X};"),
+                0x70: ("BVS", f"if (ctx->p & 0x40) return 0x{target:06X};\n    else return 0x{fallthrough:06X};"),
                 0xB0: ("BCS", f"if (ctx->p & 0x01) return 0x{target:06X};\n    else return 0x{fallthrough:06X};"),
                 0x90: ("BCC", f"if (!(ctx->p & 0x01)) return 0x{target:06X};\n    else return 0x{fallthrough:06X};"),
             }
@@ -536,7 +597,7 @@ class SnesLifter:
             return {"pc": instr_pc, "op": "TXS", "c_code": c}, next_pc
 
         elif opcode == 0x5B:  # TCD (16-bit A to DP)
-            return {"pc": instr_pc, "op": "TCD", "c_code": "ctx->dp = (uint8_t)(ctx->a & 0xFF);"}, next_pc
+            return {"pc": instr_pc, "op": "TCD", "c_code": "ctx->dp = ctx->a;"}, next_pc
 
         elif opcode == 0x7B:  # TDC (DP to 16-bit A)
             return {"pc": instr_pc, "op": "TDC", "c_code": "ctx->a = (uint16_t)ctx->dp;"}, next_pc
@@ -548,7 +609,7 @@ class SnesLifter:
             return {"pc": instr_pc, "op": "TSC", "c_code": "ctx->a = ctx->sp;"}, next_pc
 
         elif opcode == 0xFB:  # XCE (Exchange Carry with Emulation)
-            return {"pc": instr_pc, "op": "XCE", "c_code": "/* xce: exchange carry with emulation flag */"}, next_pc
+            return {"pc": instr_pc, "op": "XCE", "c_code": "{ bool previous_e = ctx->e; ctx->e = (ctx->p & 1) != 0; snes_set_p(ctx, (uint8_t)((ctx->p & ~1) | (previous_e ? 1 : 0))); if (ctx->e) ctx->sp = (uint16_t)(0x100 | (ctx->sp & 0xFF)); }"}, next_pc
 
         # 11. Status Flag Modifiers: CLC, SEC, CLI, SEI, CLD, SED, CLV
         elif opcode == 0x18:  # CLC
@@ -786,11 +847,11 @@ class SnesLifter:
                 p_flags = instr["new_p"]
 
             op = instr["op"]
-            if op in ("JMP", "JML", "RTS", "RTL", "BRL"):
+            if op in ("JMP", "JML", "JMP_IND", "JMP_IND_X", "RTS", "RTL", "BRL"):
                 if "target" in instr:
                     targets.append(instr["target"])
                 break
-            elif op in ("BEQ", "BNE", "BMI", "BPL", "BCS", "BCC", "BRA", "BRANCH"):
+            elif op in ("BEQ", "BNE", "BMI", "BPL", "BVC", "BVS", "BCS", "BCC", "BRA", "BRANCH"):
                 if "target" in instr:
                     targets.append(instr["target"])
                 if "fallthrough" in instr and op != "BRA":
@@ -802,22 +863,26 @@ class SnesLifter:
                 if "fallthrough" in instr:
                     targets.append(instr["fallthrough"])
                 # Continue block or break? Subroutines call and return, but in static recompilation we treat JSR fallthrough or block end as target
-                targets.append(next_pc)
+                if next_pc not in targets:
+                    targets.append(next_pc)
                 break
             else:
                 pc = next_pc
+        else:
+            targets.append(pc)
+            ir_ops.append({"pc": pc, "op": "FALLTHROUGH", "c_code": f"return 0x{pc:06X}; /* instruction budget */"})
 
         return ir_ops, targets, p_flags
 
     def build_cfg(self, entry_bank: int, entry_pc: int, max_blocks: int = 500) -> ControlFlowGraph:
         entry_vram = (entry_bank << 16) | entry_pc
         cfg = ControlFlowGraph(entry_vram)
-        worklist = [(entry_bank, entry_pc, 0x30)]  # Default p_flags: M=1, X=1 (8-bit mode)
+        worklist = deque([(entry_bank, entry_pc, 0x30)])  # M=1, X=1 (8-bit mode)
         visited = set()
         queued = {entry_vram}
 
         while worklist and len(cfg) < max_blocks:
-            bank, pc, p = worklist.pop(0)
+            bank, pc, p = worklist.popleft()
             addr = (bank << 16) | pc
             if addr in visited or not self.is_valid_address(addr):
                 continue
@@ -826,6 +891,7 @@ class SnesLifter:
             ops, targets, final_p = self.lift_block(bank, pc, p)
 
             # Check for recoverable indirect switch/jump tables
+            jt = None
             if not targets:
                 jt = JumpTableRecovery.recover_snes_jump_table(
                     ops,
@@ -843,7 +909,7 @@ class SnesLifter:
                 is_terminal=len(targets) == 0
             )
 
-            if "jt" in locals() and jt:
+            if jt:
                 block.is_indirect = True
                 block.terminator_type = "SWITCH"
                 block.jump_table = jt
@@ -862,27 +928,39 @@ class SnesLifter:
 
 
 def lift_snes_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blocks: int = 500) -> str:
+    if isinstance(max_blocks, bool) or not isinstance(max_blocks, int) or max_blocks < 1:
+        raise ValueError("max_blocks must be a positive integer")
+    if entry_point is not None and (isinstance(entry_point, bool) or not isinstance(entry_point, int) or not 0 <= entry_point <= 0xFFFFFF):
+        raise ValueError("SNES entry point must be an unsigned 24-bit address")
     with open(rom_path, "rb") as f:
-        rom_bytes = f.read()
-
-    # Detect LoROM vs HiROM from header location ($7FC0 for LoROM, $FFC0 for HiROM)
-    # LoROM header check
-    is_lorom = True
-    if len(rom_bytes) >= 0x7FD5:
-        # Check title or reset vector
-        reset_vec_lorom = struct.unpack("<H", rom_bytes[0x7FFC:0x7FFE])[0] if len(rom_bytes) >= 0x7FFE else 0x8000
-        reset_vec_hirom = struct.unpack("<H", rom_bytes[0xFFFC:0xFFFE])[0] if len(rom_bytes) >= 0xFFFE else 0x8000
-        if reset_vec_hirom != 0 and reset_vec_lorom == 0:
-            is_lorom = False
-
-    lifter = SnesLifter(rom_bytes, is_lorom=is_lorom)
+        rom_bytes = f.read(0x800000 + 513)
+    if not rom_bytes or len(rom_bytes) > 0x800000 + 512:
+        raise ValueError("SNES ROM size must be at most 8 MiB plus a copier header")
+    info = detect_snes(rom_bytes)
+    copier_size = info["copier_header_size"] if info else (512 if len(rom_bytes) % 0x8000 == 512 else 0)
+    rom_bytes = rom_bytes[copier_size:]
+    if len(rom_bytes) < 0x7FFE:
+        raise ValueError("SNES ROM is missing a complete header and reset vector")
+    if info:
+        mapping = info["mapping"]
+    else:
+        reset_lo = struct.unpack_from("<H", rom_bytes, 0x7FFC)[0]
+        reset_hi = struct.unpack_from("<H", rom_bytes, 0xFFFC)[0] if len(rom_bytes) >= 0xFFFE else 0
+        if reset_lo >= 0x8000:
+            mapping = "LoROM"
+        elif reset_hi >= 0x8000:
+            mapping = "HiROM"
+        else:
+            raise ValueError("SNES ROM has no valid reset vector")
+    is_lorom = mapping == "LoROM"
+    lifter = SnesLifter(rom_bytes, is_lorom=is_lorom, mapping=mapping)
 
     if entry_point is not None:
         entry_bank = (entry_point >> 16) & 0xFF
         entry_pc = entry_point & 0xFFFF
     else:
         # Read reset vector from ROM header
-        header_base = 0x7FC0 if is_lorom else 0xFFC0
+        header_base = {"LoROM": 0x7FC0, "HiROM": 0xFFC0, "ExHiROM": 0x40FFC0}[mapping]
         # Reset vector at offset 0x3C in header ($7FFC / $FFFC)
         reset_vector_offset = header_base + 0x3C
         if len(rom_bytes) >= reset_vector_offset + 2:
@@ -890,6 +968,8 @@ def lift_snes_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blo
         else:
             entry_pc = 0x8000
         entry_bank = 0x00
+    if not lifter.is_valid_address((entry_bank << 16) | entry_pc):
+        raise ValueError("SNES entry point must lie in mapped cartridge ROM")
 
     cfg = lifter.build_cfg(entry_bank, entry_pc, max_blocks=max_blocks)
 
@@ -906,14 +986,16 @@ def lift_snes_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blo
         '',
         'typedef struct {',
         '    uint16_t a, x, y, sp;      /* 16-bit registers (width controlled by flags) */',
-        '    uint8_t  dp;               /* Direct Page register (base address) */',
+        '    uint16_t dp;               /* 16-bit Direct Page register */',
         '    uint8_t  db;               /* Data Bank register */',
         '    uint8_t  pb;               /* Program Bank register */',
         '    uint8_t  p;                /* Status Register (N, V, M, X, D, I, Z, C) */',
+        '    bool     e;                /* Emulation-mode flag */',
         '    uint8_t  ram[0x20000];     /* 128KB WRAM (0x7E0000 - 0x7FFFFF) */',
         '    uint8_t  vram[0x10000];    /* 64KB VRAM */',
         '    uint8_t  cgram[512];       /* 512-byte CGRAM color palette */',
         '    uint16_t vram_addr;        /* PPU VRAM address pointer ($2116/$2117) */',
+        '    uint8_t  vmain;            /* VRAM increment control ($2115) */',
         '    uint16_t cgram_addr;       /* PPU CGRAM address pointer ($2121) */',
         '    int16_t  m7a, m7b, m7c, m7d;/* Mode 7 affine transformation matrix ($211B-$211E) */',
         '    int16_t  m7x, m7y;         /* Mode 7 center coordinates ($211F-$2120) */',
@@ -944,7 +1026,12 @@ def lift_snes_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blo
         '    if (((bank <= 0x3F) || (bank >= 0x80 && bank <= 0xBF)) && (offset == 0x4218 || offset == 0x4219)) {',
         '        return ctx->joypad1[offset - 0x4218];',
         '    }',
-        '    return 0;',
+        ('    if (offset < 0x8000 && !((bank & 0x7F) >= 0x40 && (bank & 0x7F) <= 0x6F)) return 0;' if is_lorom
+         else '    if ((bank & 0x7F) < 0x40 && offset < 0x8000) return 0;'),
+        ('    uint32_t rom_offset = ((bank & 0x7F) << 15) | (offset & 0x7FFF);' if is_lorom
+         else '    uint32_t rom_offset = ((bank & 0x3F) << 16) | offset;'),
+        ('    if (bank < 0x80) rom_offset += 0x400000;' if mapping == "ExHiROM" else ''),
+        '    return rom_offset < sizeof(snes_rom) ? snes_rom[rom_offset] : 0;',
         '}',
         '',
         'static inline void snes_write8(SnesCpuContext* ctx, uint32_t addr24, uint8_t val) {',
@@ -975,23 +1062,30 @@ def lift_snes_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blo
         '        else if (offset == 0x211C) ctx->m7b = word_val;',
         '        else if (offset == 0x211D) ctx->m7c = word_val;',
         '        else if (offset == 0x211E) ctx->m7d = word_val;',
-        '        else if (offset == 0x211F) ctx->m7x = (int16_t)((val << 8) | (ctx->m7x & 0xFF));',
-        '        else if (offset == 0x2120) ctx->m7y = (int16_t)((val << 8) | (ctx->m7y & 0xFF));',
+        '        else if (offset == 0x211F) ctx->m7x = word_val;',
+        '        else if (offset == 0x2120) ctx->m7y = word_val;',
         '        return;',
         '    }',
         '    /* PPU VRAM / Palette writes */',
         '    if (((bank <= 0x3F) || (bank >= 0x80 && bank <= 0xBF)) && offset >= 0x2100 && offset < 0x2200) {',
         '        if (offset == 0x2118 || offset == 0x2119) {',
-        '            uint32_t vaddr = (ctx->vram_addr++) & 0x7FFF;',
+        '            uint32_t vaddr = ctx->vram_addr & 0x7FFF;',
         '            ctx->vram[vaddr * 2 + (offset - 0x2118)] = val;',
+        '            if ((offset == 0x2119) == ((ctx->vmain & 0x80) != 0)) {',
+        '                unsigned step = (ctx->vmain & 3) == 0 ? 1 : (ctx->vmain & 3) == 1 ? 32 : 128;',
+        '                ctx->vram_addr = (uint16_t)(ctx->vram_addr + step);',
+        '            }',
         '            ctx->pixels_written++;',
+        '        } else if (offset == 0x2115) {',
+        '            ctx->vmain = val;',
         '        } else if (offset == 0x2116) {',
         '            ctx->vram_addr = (ctx->vram_addr & 0xFF00) | val;',
         '        } else if (offset == 0x2117) {',
         '            ctx->vram_addr = (ctx->vram_addr & 0x00FF) | (val << 8);',
         '        } else if (offset == 0x2121) {',
-        '            ctx->cgram_addr = val;',
+        '            ctx->cgram_addr = (uint16_t)(val * 2);',
         '        } else if (offset == 0x2122) {',
+        '            if (ctx->cgram_addr & 1) val &= 0x7F;',
         '            ctx->cgram[(ctx->cgram_addr++) & 0x1FF] = val;',
         '        }',
         '        return;',
@@ -1012,15 +1106,10 @@ def lift_snes_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blo
         '/* Basic Block Prototypes & Trampolines */',
         'uint32_t recomp_snes_dispatch(SnesCpuContext* ctx, uint32_t target_vram);',
         '',
-        'static inline void recomp_snes_call(SnesCpuContext* ctx, uint32_t target_vram) {',
-        '    uint32_t next = target_vram;',
-        '    int budget = 500000;',
-        '    while (next != 0 && budget-- > 0) {',
-        '        next = recomp_snes_dispatch(ctx, next);',
-        '    }',
-        '}',
-        '',
     ]
+    image = "static const uint8_t snes_rom[] = {\n" + ",\n".join(",".join(f"0x{b:02X}" for b in rom_bytes[i:i + 32]) for i in range(0, len(rom_bytes), 32)) + "\n};"
+    c_source.insert(c_source.index('/* Hardware Memory Shims & WRAM Mirroring */'), image)
+    c_source.insert(c_source.index('/* Basic Block Prototypes & Trampolines */'), SNES_CPU_HELPERS)
 
     for b in cfg.sorted_blocks():
         c_source.append(f'uint32_t bb_{b.start_vram:06X}(SnesCpuContext* ctx);')
@@ -1040,6 +1129,7 @@ def lift_snes_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blo
     # Emit dispatch trampoline
     c_source.extend([
         'uint32_t recomp_snes_dispatch(SnesCpuContext* ctx, uint32_t target_vram) {',
+        '    ctx->pb = (uint8_t)(target_vram >> 16);',
         '    switch (target_vram & 0xFFFFFF) {',
     ])
 
@@ -1178,7 +1268,6 @@ def lift_snes_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blo
         '        while (cycles-- > 0 && curr_pc != 0) {',
         '            curr_pc = recomp_snes_dispatch(ctx, curr_pc);',
         '        }',
-        '        if (curr_pc == 0) curr_pc = start_pc;',
         '        ',
         '        /* 3. Blit VRAM to screen buffer */',
         '        update_snes_screen(ctx);',
@@ -1200,26 +1289,29 @@ def lift_snes_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blo
         '    for (int i = 1; i < argc; i++) {',
         '        if (strcmp(argv[i], "--window") == 0 || strcmp(argv[i], "-w") == 0) {',
         '            launch_window = true;',
-        '        } else if (strcmp(argv[i], "--no-hold") == 0 || strcmp(argv[i], "--headless") == 0) {',
+        '        } else if (strcmp(argv[i], "--headless") == 0) {',
+        '            launch_window = false;',
         '            hold_window = false;',
+        '        } else if (strcmp(argv[i], "--no-hold") == 0) {',
+        '            hold_window = false;',
+        '        } else {',
+        '            fprintf(stderr, "Unknown option: %s\\n", argv[i]);',
+        '            return 2;',
         '        }',
         '    }',
         '    printf("========================================================\\n");',
         '    printf("   Automated Recompiled SNES Game - Native Runtime       \\n");',
         '    printf("========================================================\\n");',
         '    SnesCpuContext* ctx = &s_snes_ctx;',
-        '    ctx->sp = 0x01FF;  /* Initial SNES Stack Pointer */',
-        '    ctx->p  = 0x34;    /* Initial Status Register: M=1, X=1, I=1 */',
-        '    ctx->spc700_ports[0] = 0xBB; /* SPC700 Audio Ready Handshake signature */',
-        '    ctx->spc700_ports[1] = 0xAA;',
-        '    ctx->m7a = 0x0100; /* Mode 7 1.0 identity scale */',
-        '    ctx->m7d = 0x0100;',
+        '    snes_init_context(ctx);',
         f'    uint32_t next_pc = 0x{(entry_bank << 16) | (entry_pc & 0xFFFF):06X};',
         '#ifdef _WIN32',
         '    if (launch_window) {',
         '        run_snes_presentation_window(ctx, next_pc);',
         '        return 0;',
         '    }',
+        '#else',
+        '    (void)launch_window;',
         '#endif',
         '    int max_steps = 100000;',
         '    int executed = 0;',
@@ -1231,6 +1323,7 @@ def lift_snes_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blo
         '        }',
         '    } __except(EXCEPTION_EXECUTE_HANDLER) {',
         '        printf("[Crash Guard] Handled hardware exception at PC 0x%06X after %d steps.\\n", next_pc, executed);',
+        '        return 1;',
         '    }',
         '#else',
         '    while (max_steps-- > 0 && next_pc != 0) {',
