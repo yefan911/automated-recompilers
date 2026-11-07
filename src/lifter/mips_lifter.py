@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from src.lifter.cfg import BasicBlock, ControlFlowGraph, JumpTableRecovery
 from src.core.rom_detector import inspect_file
+from src.core.data_block_reader import create_block_reader
 
 MIPS_REG_NAMES = [
     "zero", "at", "v0", "v1", "a0", "a1", "a2", "a3",
@@ -65,6 +66,7 @@ class MipsLifter:
                     "vram": vram_addr,
                     "asm": f"jr ${MIPS_REG_NAMES[rs]}",
                     "c": f"return ctx->r[{rs}]; /* indirect jump / return */",
+                    "next_pc": f"ctx->r[{rs}]",
                     "is_branch": True,
                     "is_indirect": True,
                     "is_terminal": True,
@@ -72,11 +74,15 @@ class MipsLifter:
                 }
 
             elif funct == 0x09:  # JALR
+                link = f"ctx->r[{rd}] = 0x{(vram_addr + 8) & 0xFFFFFFFF:08X};" if rd else ""
                 return {
                     "vram": vram_addr,
                     "asm": f"jalr ${MIPS_REG_NAMES[rd]}, ${MIPS_REG_NAMES[rs]}",
-                    "c": f"ctx->r[{rd if rd != 0 else 31}] = 0x{vram_addr + 8:08X};\n    recomp_mips_dispatch(ctx, ctx->r[{rs}]);",
+                    "c": f"{{ uint32_t target = ctx->r[{rs}]; {link} return target; }}",
                     "is_call": True,
+                    "next_pc": f"ctx->r[{rs}]",
+                    "link_register": rd,
+                    "targets": [(vram_addr + 8) & 0xFFFFFFFF],
                 }
 
             elif funct == 0x20 or funct == 0x21:  # ADD / ADDU
@@ -100,8 +106,10 @@ class MipsLifter:
                 return {"vram": vram_addr, "asm": f"xor ${MIPS_REG_NAMES[rd]}, ${MIPS_REG_NAMES[rs]}, ${MIPS_REG_NAMES[rt]}", "c": c_code}
 
             elif funct == 0x2A or funct == 0x2B:  # SLT / SLTU
-                c_code = f"ctx->r[{rd}] = ((int32_t)ctx->r[{rs}] < (int32_t)ctx->r[{rt}]) ? 1 : 0;" if rd != 0 else "/* nop: r0 */"
-                return {"vram": vram_addr, "asm": f"slt ${MIPS_REG_NAMES[rd]}, ${MIPS_REG_NAMES[rs]}, ${MIPS_REG_NAMES[rt]}", "c": c_code}
+                cast = "(int32_t)" if funct == 0x2A else ""
+                mnemonic = "slt" if funct == 0x2A else "sltu"
+                c_code = f"ctx->r[{rd}] = ({cast}ctx->r[{rs}] < {cast}ctx->r[{rt}]) ? 1 : 0;" if rd != 0 else "/* nop: r0 */"
+                return {"vram": vram_addr, "asm": f"{mnemonic} ${MIPS_REG_NAMES[rd]}, ${MIPS_REG_NAMES[rs]}, ${MIPS_REG_NAMES[rt]}", "c": c_code}
 
             elif funct == 0x00:  # SLL
                 c_code = f"ctx->r[{rd}] = ctx->r[{rt}] << {shamt};" if rd != 0 else "/* nop: r0 */"
@@ -122,10 +130,10 @@ class MipsLifter:
                 return {"vram": vram_addr, "asm": f"multu ${MIPS_REG_NAMES[rs]}, ${MIPS_REG_NAMES[rt]}", "c": f"{{ uint64_t prod = (uint64_t)ctx->r[{rs}] * (uint64_t)ctx->r[{rt}]; ctx->lo = (uint32_t)prod; ctx->hi = (uint32_t)(prod >> 32); }}"}
 
             elif funct == 0x1A:  # DIV
-                return {"vram": vram_addr, "asm": f"div ${MIPS_REG_NAMES[rs]}, ${MIPS_REG_NAMES[rt]}", "c": f"if (ctx->r[{rt}] != 0) {{ ctx->lo = (uint32_t)((int32_t)ctx->r[{rs}] / (int32_t)ctx->r[{rt}]); ctx->hi = (uint32_t)((int32_t)ctx->r[{rs}] % (int32_t)ctx->r[{rt}]); }}"}
+                return {"vram": vram_addr, "asm": f"div ${MIPS_REG_NAMES[rs]}, ${MIPS_REG_NAMES[rt]}", "c": f"{{ int64_t dividend = (int32_t)ctx->r[{rs}]; int64_t divisor = (int32_t)ctx->r[{rt}]; if (divisor != 0) {{ ctx->lo = (uint32_t)(dividend / divisor); ctx->hi = (uint32_t)(dividend % divisor); }} else {{ ctx->lo = dividend < 0 ? 1u : 0xFFFFFFFFu; ctx->hi = ctx->r[{rs}]; }} }}"}
 
             elif funct == 0x1B:  # DIVU
-                return {"vram": vram_addr, "asm": f"divu ${MIPS_REG_NAMES[rs]}, ${MIPS_REG_NAMES[rt]}", "c": f"if (ctx->r[{rt}] != 0) {{ ctx->lo = ctx->r[{rs}] / ctx->r[{rt}]; ctx->hi = ctx->r[{rs}] % ctx->r[{rt}]; }}"}
+                return {"vram": vram_addr, "asm": f"divu ${MIPS_REG_NAMES[rs]}, ${MIPS_REG_NAMES[rt]}", "c": f"if (ctx->r[{rt}] != 0) {{ ctx->lo = ctx->r[{rs}] / ctx->r[{rt}]; ctx->hi = ctx->r[{rs}] % ctx->r[{rt}]; }} else {{ ctx->lo = 0xFFFFFFFFu; ctx->hi = ctx->r[{rs}]; }}"}
 
             elif funct == 0x10:  # MFHI
                 c_code = f"ctx->r[{rd}] = ctx->hi;" if rd != 0 else "/* nop: r0 */"
@@ -152,6 +160,7 @@ class MipsLifter:
                 "vram": vram_addr,
                 "asm": f"j 0x{target:08X}",
                 "c": f"return 0x{target:08X};",
+                "next_pc": f"0x{target:08X}",
                 "is_branch": True,
                 "is_terminal": True,
                 "targets": [target]
@@ -163,20 +172,23 @@ class MipsLifter:
             return {
                 "vram": vram_addr,
                 "asm": f"jal 0x{target:08X}",
-                "c": f"ctx->r[31] = 0x{vram_addr + 8:08X};\n    recomp_mips_dispatch(ctx, 0x{target:08X});",
+                "c": f"ctx->r[31] = 0x{(vram_addr + 8) & 0xFFFFFFFF:08X};\n    return 0x{target:08X};",
                 "is_call": True,
-                "targets": [target]
+                "next_pc": f"0x{target:08X}",
+                "link_register": 31,
+                "targets": [target, (vram_addr + 8) & 0xFFFFFFFF]
             }
 
         # 4. BEQ
         elif op == 0x04:
-            target = vram_addr + 4 + (simm << 2)
-            fallthrough = vram_addr + 8
+            target = (vram_addr + 4 + (simm << 2)) & 0xFFFFFFFF
+            fallthrough = (vram_addr + 8) & 0xFFFFFFFF
             cond = f"ctx->r[{rs}] == ctx->r[{rt}]"
             return {
                 "vram": vram_addr,
                 "asm": f"beq ${MIPS_REG_NAMES[rs]}, ${MIPS_REG_NAMES[rt]}, 0x{target:08X}",
                 "c": f"if ({cond}) return 0x{target:08X};\n    else return 0x{fallthrough:08X};",
+                "next_pc": f"({cond}) ? 0x{target:08X} : 0x{fallthrough:08X}",
                 "is_branch": True,
                 "is_terminal": True,
                 "targets": [target, fallthrough]
@@ -184,13 +196,14 @@ class MipsLifter:
 
         # 5. BNE
         elif op == 0x05:
-            target = vram_addr + 4 + (simm << 2)
-            fallthrough = vram_addr + 8
+            target = (vram_addr + 4 + (simm << 2)) & 0xFFFFFFFF
+            fallthrough = (vram_addr + 8) & 0xFFFFFFFF
             cond = f"ctx->r[{rs}] != ctx->r[{rt}]"
             return {
                 "vram": vram_addr,
                 "asm": f"bne ${MIPS_REG_NAMES[rs]}, ${MIPS_REG_NAMES[rt]}, 0x{target:08X}",
                 "c": f"if ({cond}) return 0x{target:08X};\n    else return 0x{fallthrough:08X};",
+                "next_pc": f"({cond}) ? 0x{target:08X} : 0x{fallthrough:08X}",
                 "is_branch": True,
                 "is_terminal": True,
                 "targets": [target, fallthrough]
@@ -198,7 +211,7 @@ class MipsLifter:
 
         # 6. ADDI / ADDIU
         elif op == 0x08 or op == 0x09:
-            c_code = f"ctx->r[{rt}] = (uint32_t)((int32_t)ctx->r[{rs}] + {simm});" if rt != 0 else "/* nop */"
+            c_code = f"ctx->r[{rt}] = ctx->r[{rs}] + (uint32_t)({simm});" if rt != 0 else "/* nop */"
             mnemonic = "addi" if op == 0x08 else "addiu"
             return {"vram": vram_addr, "asm": f"{mnemonic} ${MIPS_REG_NAMES[rt]}, ${MIPS_REG_NAMES[rs]}, {simm}", "c": c_code}
 
@@ -250,31 +263,40 @@ class MipsLifter:
         elif op == 0x28:
             return {"vram": vram_addr, "asm": f"sb ${MIPS_REG_NAMES[rt]}, {simm}(${MIPS_REG_NAMES[rs]})", "c": f"mips_write8(ctx, ctx->r[{rs}] + ({simm}), (uint8_t)ctx->r[{rt}]);"}
 
-        # 16. REGIMM (BLTZ, BGEZ)
-        elif op == 0x01:
-            target = vram_addr + 4 + (simm << 2)
-            fallthrough = vram_addr + 8
-            is_bgez = (rt == 0x01)
+        # 16. REGIMM (BLTZ, BGEZ, BLTZAL, BGEZAL). Branch-likely
+        # variants have different delay-slot semantics and are not ordinary BLTZ.
+        elif op == 0x01 and rt in (0x00, 0x01, 0x10, 0x11):
+            target = (vram_addr + 4 + (simm << 2)) & 0xFFFFFFFF
+            fallthrough = (vram_addr + 8) & 0xFFFFFFFF
+            is_bgez = (rt in (0x01, 0x11))
+            is_link = rt in (0x10, 0x11)
             cond = f"(int32_t)ctx->r[{rs}] >= 0" if is_bgez else f"(int32_t)ctx->r[{rs}] < 0"
             mnemonic = "bgez" if is_bgez else "bltz"
+            if is_link:
+                mnemonic += "al"
+            link = f"ctx->r[31] = 0x{fallthrough:08X};" if is_link else ""
             return {
                 "vram": vram_addr,
                 "asm": f"{mnemonic} ${MIPS_REG_NAMES[rs]}, 0x{target:08X}",
-                "c": f"if ({cond}) return 0x{target:08X};\n    else return 0x{fallthrough:08X};",
+                "c": f"{{ uint32_t target = ({cond}) ? 0x{target:08X} : 0x{fallthrough:08X}; {link} return target; }}",
+                "next_pc": f"({cond}) ? 0x{target:08X} : 0x{fallthrough:08X}",
                 "is_branch": True,
                 "is_terminal": True,
+                "is_call": is_link,
+                "link_register": 31 if is_link else 0,
                 "targets": [target, fallthrough]
             }
 
         # 17. BLEZ
         elif op == 0x06:
-            target = vram_addr + 4 + (simm << 2)
-            fallthrough = vram_addr + 8
+            target = (vram_addr + 4 + (simm << 2)) & 0xFFFFFFFF
+            fallthrough = (vram_addr + 8) & 0xFFFFFFFF
             cond = f"(int32_t)ctx->r[{rs}] <= 0"
             return {
                 "vram": vram_addr,
                 "asm": f"blez ${MIPS_REG_NAMES[rs]}, 0x{target:08X}",
                 "c": f"if ({cond}) return 0x{target:08X};\n    else return 0x{fallthrough:08X};",
+                "next_pc": f"({cond}) ? 0x{target:08X} : 0x{fallthrough:08X}",
                 "is_branch": True,
                 "is_terminal": True,
                 "targets": [target, fallthrough]
@@ -282,13 +304,14 @@ class MipsLifter:
 
         # 18. BGTZ
         elif op == 0x07:
-            target = vram_addr + 4 + (simm << 2)
-            fallthrough = vram_addr + 8
+            target = (vram_addr + 4 + (simm << 2)) & 0xFFFFFFFF
+            fallthrough = (vram_addr + 8) & 0xFFFFFFFF
             cond = f"(int32_t)ctx->r[{rs}] > 0"
             return {
                 "vram": vram_addr,
                 "asm": f"bgtz ${MIPS_REG_NAMES[rs]}, 0x{target:08X}",
                 "c": f"if ({cond}) return 0x{target:08X};\n    else return 0x{fallthrough:08X};",
+                "next_pc": f"({cond}) ? 0x{target:08X} : 0x{fallthrough:08X}",
                 "is_branch": True,
                 "is_terminal": True,
                 "targets": [target, fallthrough]
@@ -379,47 +402,40 @@ class MipsLifter:
             raw = self.read_u32(pc)
             info = self.lift_instruction(pc, raw)
 
-            if info.get("is_branch"):
-                delay_slot_raw = self.read_u32(pc + 4)
-                delay_slot_info = self.lift_instruction(pc + 4, delay_slot_raw)
-
-                # Execute delay slot instruction before branch executes
-                if delay_slot_info.get("c") and delay_slot_info.get("c") != "/* nop */":
-                    ir_ops.append({
-                        "pc": pc + 4,
-                        "op": "DELAY_SLOT",
-                        "c_code": f"/* Delay Slot */ {delay_slot_info['c']}"
-                    })
-
+            if info.get("is_branch") or info.get("is_call"):
+                # MIPS decides the transfer before executing the delay slot.
+                # Calls also expose their link register to that instruction.
+                target_var = f"next_pc_{pc:08X}"
                 ir_ops.append({
                     "pc": pc,
-                    "op": info.get("asm", "").split()[0].upper(),
-                    "c_code": info["c"],
-                    "asm": info.get("asm", "")
+                    "op": "BRANCH_STATE",
+                    "c_code": f"uint32_t {target_var} = {info['next_pc']};",
                 })
-
-                targets.extend(info.get("targets", []))
-                break
-
-            elif info.get("is_call"):
-                delay_slot_raw = self.read_u32(pc + 4)
-                delay_slot_info = self.lift_instruction(pc + 4, delay_slot_raw)
+                link_register = info.get("link_register", 0)
+                if link_register:
+                    ir_ops.append({
+                        "pc": pc,
+                        "op": "CALL_LINK",
+                        "c_code": f"ctx->r[{link_register}] = 0x{(pc + 8) & 0xFFFFFFFF:08X};",
+                    })
+                slot_pc = (pc + 4) & 0xFFFFFFFF
+                delay_slot_raw = self.read_u32(slot_pc)
+                delay_slot_info = self.lift_instruction(slot_pc, delay_slot_raw)
                 if delay_slot_info.get("c") and delay_slot_info.get("c") != "/* nop */":
                     ir_ops.append({
-                        "pc": pc + 4,
+                        "pc": slot_pc,
                         "op": "DELAY_SLOT",
                         "c_code": f"/* Delay Slot */ {delay_slot_info['c']}",
                         "asm": delay_slot_info.get("asm", "")
                     })
                 ir_ops.append({
                     "pc": pc,
-                    "op": "CALL",
-                    "c_code": info["c"],
+                    "op": "CALL" if info.get("is_call") else info.get("asm", "").split()[0].upper(),
+                    "c_code": f"return {target_var};",
                     "asm": info.get("asm", "")
                 })
                 targets.extend(info.get("targets", []))
-                pc += 8  # Skip both call and delay slot
-                continue
+                break
 
             else:
                 ir_ops.append({
@@ -428,7 +444,10 @@ class MipsLifter:
                     "c_code": info["c"],
                     "asm": info.get("asm", "")
                 })
-                pc += 4
+                pc = (pc + 4) & 0xFFFFFFFF
+        else:
+            ir_ops.append({"pc": pc, "op": "FALLTHROUGH", "c_code": f"return 0x{pc:08X};"})
+            targets.append(pc)
 
         return ir_ops, targets
 
@@ -445,6 +464,7 @@ class MipsLifter:
             visited.add(vram)
 
             ops, targets = self.lift_block(vram)
+            jt = None
 
             # Check for indirect switch statement / jump table targets
             if not targets:
@@ -461,7 +481,7 @@ class MipsLifter:
             )
 
             if not ops or (len(targets) > 0 and ops[-1].get("op") == "JR" and "$ra" not in ops[-1].get("asm", "").lower()):
-                if "jt" in locals() and jt:
+                if jt:
                     block.is_indirect = True
                     block.terminator_type = "SWITCH"
                     block.jump_table = jt
@@ -478,6 +498,10 @@ class MipsLifter:
 
 
 def lift_mips_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blocks: int = 1500) -> str:
+    if isinstance(max_blocks, bool) or not isinstance(max_blocks, int) or max_blocks < 1:
+        raise ValueError("max_blocks must be a positive integer")
+    if entry_point is not None and (isinstance(entry_point, bool) or not isinstance(entry_point, int) or not 0 <= entry_point <= 0xFFFFFFFF):
+        raise ValueError("MIPS entry point must be an unsigned 32-bit address")
     # Read first 128KB to detect header without loading whole CD image into RAM
     with open(rom_path, "rb") as f:
         header_sample = f.read(131072)
@@ -486,74 +510,82 @@ def lift_mips_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blo
     is_big_endian = True
     base_vram = 0x80000000
     ep = entry_point
-
-    if header_sample[:4] == b'\x80\x37\x12\x40':  # N64 .z64 Big-endian
+    initial_gp = 0
+    initial_sp = 0
+    info = inspect_file(rom_path)
+    n64_magic = header_sample[:4]
+    if n64_magic in (b'\x80\x37\x12\x40', b'\x40\x12\x37\x80', b'\x37\x80\x40\x12'):
+        # Dump byte order is independent of the N64 CPU's big-endian memory.
+        code_offset = 0x1000 if os.path.getsize(rom_path) > 0x1000 else 0x400
         with open(rom_path, "rb") as f:
-            data = f.read()
-        is_big_endian = True
-        ep = ep or struct.unpack(">I", data[0x08:0x0C])[0]
-        # In official N64 ROMs (size > 0x1000), offset 0x1000 maps to ep.
-        # In small test ROMs (size <= 0x1000), offset 0x400 maps to ep.
-        code_offset = 0x1000 if len(data) > 0x1000 else 0x400
+            data = f.read(0x800000 + code_offset)
+        if n64_magic == b'\x40\x12\x37\x80':
+            if len(data) % 4:
+                raise ValueError("N64 word-swapped image has a partial trailing word")
+            normalized = bytearray(len(data))
+            for i in range(4):
+                normalized[i::4] = data[3 - i::4]
+            data = bytes(normalized)
+        elif n64_magic == b'\x37\x80\x40\x12':
+            if len(data) % 2:
+                raise ValueError("N64 byte-swapped image has a partial trailing pair")
+            normalized = bytearray(len(data))
+            normalized[0::2], normalized[1::2] = data[1::2], data[0::2]
+            data = bytes(normalized)
+        if len(data) < 12:
+            raise ValueError("Truncated N64 header")
+        ep = ep if ep is not None else struct.unpack(">I", data[0x08:0x0C])[0]
         base_vram = (ep - code_offset) & 0xFFFFFFFF
-    elif header_sample[:4] == b'\x40\x12\x37\x80':  # N64 .n64 Little-endian
-        with open(rom_path, "rb") as f:
-            data = f.read()
+        initial_data = data[code_offset:]
+        initial_vram = ep
+    elif info and "PlayStation" in info.get("console", ""):
+        reader = create_block_reader(rom_path)
+        try:
+            base_vram = reader.text_vram
+            available = 0x800000 - (base_vram & 0x1FFFFFFF)
+            if available < reader.text_size:
+                raise ValueError("PS1 executable payload exceeds mapped guest RAM")
+            data = reader.read_bytes(base_vram, reader.text_size)
+            if len(data) != reader.text_size:
+                raise ValueError("Truncated PS1 executable payload")
+        finally:
+            reader.close()
         is_big_endian = False
-        ep = ep or struct.unpack("<I", data[0x08:0x0C])[0]
-        code_offset = 0x1000 if len(data) > 0x1000 else 0x400
-        base_vram = (ep - code_offset) & 0xFFFFFFFF
-    elif header_sample.startswith(b"PS-X EXE"):
-        with open(rom_path, "rb") as f:
-            data = f.read()
-        is_big_endian = False
-        ep = ep or struct.unpack("<I", data[0x10:0x14])[0]
-        text_vram = struct.unpack("<I", data[0x18:0x1C])[0]
-        base_vram = text_vram
+        ep = ep if ep is not None else int(info["entry_point"], 0)
+        initial_gp = int(info.get("initial_gp", "0"), 0)
+        initial_sp = int(info.get("initial_sp", "0"), 0)
+        initial_data = data
+        initial_vram = base_vram
     else:
-        # Check for PS1 CD image (ISO-9660 or raw 2352-byte bin)
-        psx_idx = header_sample.find(b"PS-X EXE")
-        if psx_idx != -1 and len(header_sample) >= psx_idx + 0x40:
-            hdr = header_sample[psx_idx:psx_idx+2048]
-            initial_pc = struct.unpack("<I", hdr[0x10:0x14])[0]
-            text_vram = struct.unpack("<I", hdr[0x18:0x1C])[0]
-            text_size = struct.unpack("<I", hdr[0x1C:0x20])[0]
+        with open(rom_path, "rb") as f:
+            data = f.read(0x800000)
+        initial_data = data
+        initial_vram = base_vram
 
-            is_raw_cd = (psx_idx >= 24 and (psx_idx - 24) % 2352 == 0)
-            sector_size = 2352 if is_raw_cd else 2048
-            header_sector = psx_idx // sector_size
-            text_sector_start = header_sector + 1
-            sectors_needed = (text_size + 2047) // 2048
-
-            text_bytes = bytearray()
-            with open(rom_path, "rb") as f:
-                f.seek(text_sector_start * sector_size)
-                for _ in range(sectors_needed):
-                    chunk = f.read(sector_size)
-                    if len(chunk) < sector_size:
-                        break
-                    if is_raw_cd:
-                        text_bytes.extend(chunk[24:2072])
-                    else:
-                        text_bytes.extend(chunk[:2048])
-
-            data = bytes(text_bytes[:text_size])
-            is_big_endian = False
-            base_vram = text_vram
-            ep = ep or initial_pc
-        else:
-            with open(rom_path, "rb") as f:
-                data = f.read()
-
-    ep = ep or 0x80000400
+    ep = ep if ep is not None else 0x80000400
+    initial_phys = initial_vram & 0x1FFFFFFF
+    if initial_phys >= 0x800000:
+        raise ValueError("Executable entry or text address is outside mapped guest RAM")
+    initial_data = initial_data[:0x800000 - initial_phys]
+    data = data[:((initial_vram - base_vram) & 0xFFFFFFFF) + len(initial_data)]
     lifter = MipsLifter(data, base_vram=base_vram, is_big_endian=is_big_endian)
+    if not lifter.is_valid_vram(ep):
+        raise ValueError("MIPS entry point is outside the executable payload")
     cfg = lifter.build_cfg(ep, max_blocks=max_blocks)
+
+    shifts32 = (24, 16, 8, 0) if is_big_endian else (0, 8, 16, 24)
+    shifts16 = (8, 0) if is_big_endian else (0, 8)
+    read32 = " | ".join(f"((uint32_t)ctx->rdram[phys + {i}] << {shift})" for i, shift in enumerate(shifts32))
+    read16 = " | ".join(f"((uint16_t)ctx->rdram[phys + {i}] << {shift})" for i, shift in enumerate(shifts16))
+    write32 = " ".join(f"ctx->rdram[phys + {i}] = (uint8_t)(val >> {shift});" for i, shift in enumerate(shifts32))
+    write16 = " ".join(f"ctx->rdram[phys + {i}] = (uint8_t)(val >> {shift});" for i, shift in enumerate(shifts16))
 
     c_source = [
         '/* Automatically Generated by Automated Recompiler Framework (MIPS Target) */',
         '#include <stdint.h>',
         '#include <stdio.h>',
         '#include <stdbool.h>',
+        '#include <string.h>',
         '',
         'typedef struct {',
         '    uint32_t r[32];         /* $zero, $at, $v0-$v1, $a0-$a3, $t0-$t9, $s0-$s7, $gp, $sp, $fp, $ra */',
@@ -566,6 +598,15 @@ def lift_mips_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blo
         '    uint32_t frame_count;   /* Continuous 60 FPS frame counter */',
         '    uint8_t  rdram[0x800000]; /* 8MB RDRAM */',
         '} MipsCpuContext;',
+        'static const uint8_t mips_initial_data[] = {',
+        *('    ' + ', '.join(f'0x{value:02X}' for value in initial_data[i:i + 16]) + ',' for i in range(0, len(initial_data), 16)),
+        '};',
+        'static void mips_init_context(MipsCpuContext* ctx) {',
+        '    memset(ctx, 0, sizeof(*ctx));',
+        f'    memcpy(&ctx->rdram[0x{initial_phys:X}], mips_initial_data, sizeof(mips_initial_data));',
+        f'    ctx->r[28] = 0x{initial_gp:08X};',
+        f'    ctx->r[29] = 0x{initial_sp:08X};',
+        '}',
         '',
         '/* PS1 GTE (Geometry Transformation Engine) Shims */',
         'static inline void gte_rtps(MipsCpuContext* ctx) {',
@@ -600,7 +641,7 @@ def lift_mips_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blo
         '    int32_t sy1 = (int16_t)(ctx->gte_data[13] >> 16);',
         '    int32_t sx2 = (int16_t)(ctx->gte_data[14] & 0xFFFF);',
         '    int32_t sy2 = (int16_t)(ctx->gte_data[14] >> 16);',
-        '    int32_t nclip = (sx0 * sy1 + sx1 * sy2 + sx2 * sy0) - (sx0 * sy2 + sx1 * sy0 + sx2 * sy1);',
+        '    int64_t nclip = ((int64_t)sx0 * sy1 + (int64_t)sx1 * sy2 + (int64_t)sx2 * sy0) - ((int64_t)sx0 * sy2 + (int64_t)sx1 * sy0 + (int64_t)sx2 * sy1);',
         '    ctx->gte_data[24] = (uint32_t)nclip; /* MAC0 */',
         '}',
         '',
@@ -643,24 +684,24 @@ def lift_mips_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blo
         '/* Hardware Memory Shims */',
         'static inline uint32_t mips_read32(MipsCpuContext* ctx, uint32_t addr) {',
         '    uint32_t phys = addr & 0x1FFFFFFF;',
-        '    if (phys <= 0x800000 - 4) return *(uint32_t*)&ctx->rdram[phys];',
+        f'    if (phys <= sizeof(ctx->rdram) - 4) return {read32};',
         '    return 0;',
         '}',
         '',
         'static inline void mips_write32(MipsCpuContext* ctx, uint32_t addr, uint32_t val) {',
         '    uint32_t phys = addr & 0x1FFFFFFF;',
-        '    if (phys <= 0x800000 - 4) *(uint32_t*)&ctx->rdram[phys] = val;',
+        f'    if (phys <= sizeof(ctx->rdram) - 4) {{ {write32} }}',
         '}',
         '',
         'static inline uint16_t mips_read16(MipsCpuContext* ctx, uint32_t addr) {',
         '    uint32_t phys = addr & 0x1FFFFFFF;',
-        '    if (phys <= 0x800000 - 2) return *(uint16_t*)&ctx->rdram[phys];',
+        f'    if (phys <= sizeof(ctx->rdram) - 2) return (uint16_t)({read16});',
         '    return 0;',
         '}',
         '',
         'static inline void mips_write16(MipsCpuContext* ctx, uint32_t addr, uint16_t val) {',
         '    uint32_t phys = addr & 0x1FFFFFFF;',
-        '    if (phys <= 0x800000 - 2) *(uint16_t*)&ctx->rdram[phys] = val;',
+        f'    if (phys <= sizeof(ctx->rdram) - 2) {{ {write16} }}',
         '}',
         '',
         'static inline uint8_t mips_read8(MipsCpuContext* ctx, uint32_t addr) {',
@@ -723,18 +764,18 @@ def lift_mips_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blo
         '    if (GetAsyncKeyState(\'X\')       & 0x8000) buttons |= (1 << 6); /* Button B */',
         '    if (GetAsyncKeyState(\'A\')       & 0x8000) buttons |= (1 << 7); /* Button C / Trigger */',
         '    ctx->controller_state = buttons;',
-        '    *(uint32_t*)&ctx->rdram[0x00000010] = buttons;',
+        '    mips_write32(ctx, 0x00000010, buttons);',
         '}',
         '',
         'void update_screen_from_rdram(MipsCpuContext* ctx) {',
         '    uint32_t fb_base = 0x00100000;',
         '    int has_fb = 0;',
         '    for (int test_i = 0; test_i < 50; test_i++) {',
-        '        if (*(uint32_t*)&ctx->rdram[(0x00100000 + test_i * 64) & 0x7FFFFF] != 0) {',
+        '        if (mips_read32(ctx, (0x00100000 + test_i * 64) & 0x7FFFFF) != 0) {',
         '            fb_base = 0x00100000;',
         '            has_fb = 1;',
         '            break;',
-        '        } else if (*(uint32_t*)&ctx->rdram[(0x00200000 + test_i * 64) & 0x7FFFFF] != 0) {',
+        '        } else if (mips_read32(ctx, (0x00200000 + test_i * 64) & 0x7FFFFF) != 0) {',
         '            fb_base = 0x00200000;',
         '            has_fb = 1;',
         '            break;',
@@ -744,7 +785,7 @@ def lift_mips_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blo
         '        for (int x = 0; x < 320; x++) {',
         '            int i = y * 320 + x;',
         '            if (has_fb) {',
-        '                uint32_t pixel = *(uint32_t*)&ctx->rdram[(fb_base + i * 4) & 0x7FFFFF];',
+        '                uint32_t pixel = mips_read32(ctx, (fb_base + i * 4) & 0x7FFFFF);',
         '                s_screen_buffer[i] = pixel;',
         '            } else {',
         '                uint8_t frame_shift = (uint8_t)(ctx->frame_count % 256);',
@@ -842,6 +883,7 @@ def lift_mips_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blo
         '    DestroyWindow(hwnd);',
         '}',
         '',
+        'static bool g_mips_window_requested = false;',
         'LONG WINAPI RecompCrashHandler(EXCEPTION_POINTERS* ep) {',
         '    char buf[512];',
         '    snprintf(buf, sizeof(buf),',
@@ -852,47 +894,49 @@ def lift_mips_rom_to_c(rom_path: str, entry_point: Optional[int] = None, max_blo
         '        ep->ExceptionRecord->ExceptionCode,',
         '        ep->ExceptionRecord->ExceptionAddress);',
         '    fprintf(stderr, "\\n[CRASH PREVENTED] %s\\n", buf);',
-        '    MessageBoxA(NULL, buf, "Recompiler Execution Protection", MB_ICONWARNING | MB_OK);',
+        '    if (g_mips_window_requested) MessageBoxA(NULL, buf, "Recompiler Execution Protection", MB_ICONWARNING | MB_OK);',
         '    return EXCEPTION_EXECUTE_HANDLER;',
         '}',
         '#endif',
         '',
         'static MipsCpuContext s_ctx;',
         'int main(int argc, char** argv) {',
-        '    (void)argc;',
-        '    (void)argv;',
+        '    bool want_window = false;',
+        '    for (int i = 1; i < argc; i++) {',
+        '        if (strcmp(argv[i], "--window") == 0 || strcmp(argv[i], "-w") == 0) want_window = true;',
+        '        else if (strcmp(argv[i], "--headless") == 0) want_window = false;',
+        '        else if (strcmp(argv[i], "--no-hold") == 0) { /* bounded mode */ }',
+        '        else { fprintf(stderr, "Unknown option: %s\\n", argv[i]); return 2; }',
+        '    }',
         '#ifdef _WIN32',
+        '    g_mips_window_requested = want_window;',
         '    SetUnhandledExceptionFilter(RecompCrashHandler);',
         '#endif',
         '    printf("=== Starting Automated Recompiled MIPS Game ===\\n");',
         '    MipsCpuContext* ctx = &s_ctx;',
+        '    mips_init_context(ctx);',
         f'    uint32_t next_pc = 0x{ep:08X};',
         '    int max_steps = 10000;',
         '#if defined(_MSC_VER) && defined(_WIN32)',
         '    __try {',
+        '#endif',
+        '#ifdef _WIN32',
+        '        if (want_window) {',
+        '            run_mips_presentation_window(ctx, next_pc);',
+        '        } else',
+        '#else',
+        '        (void)want_window;',
+        '#endif',
         '        while (max_steps-- > 0 && next_pc != 0) {',
         '            next_pc = recomp_mips_dispatch(ctx, next_pc);',
         '        }',
+        '#if defined(_MSC_VER) && defined(_WIN32)',
         '    } __except(RecompCrashHandler(GetExceptionInformation())) {',
         '        printf("[MIPS Runtime] Recovered from exception during dispatch.\\n");',
-        '    }',
-        '#else',
-        '    while (max_steps-- > 0 && next_pc != 0) {',
-        '        next_pc = recomp_mips_dispatch(ctx, next_pc);',
+        '        return 1;',
         '    }',
         '#endif',
         '    printf("=== Recompiled execution finished successfully ===\\n");',
-        '#ifdef _WIN32',
-        '    int want_window = 0;',
-        '    if (argc > 1 && (strcmp(argv[1], "--window") == 0 || strcmp(argv[1], "-w") == 0)) {',
-        '        want_window = 1;',
-        '    }',
-        '    if (want_window) {',
-        '        printf("Opening live 60 FPS presentation window (640x480)...\\n");',
-        '        printf("Controls: Arrows = D-Pad, Z = A, X = B, Enter = Start, ESC = Exit\\n");',
-        '        run_mips_presentation_window(ctx, next_pc);',
-        '    }',
-        '#endif',
         '    return 0;',
         '}',
     ])

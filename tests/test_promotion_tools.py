@@ -206,8 +206,15 @@ def test_webcfg_json_export(tmp_path):
     assert "metadata" in dataset
     assert "blocks" in dataset
     assert "edges" in dataset
-    assert len(dataset["blocks"]) == 5
-    assert len(dataset["edges"]) > 0
+    assert {block["start_vram"] for block in dataset["blocks"]} == set(cfg.blocks)
+    assert dataset["metadata"]["total_blocks"] == len(cfg)
+    exported_edges = {
+        (int(edge["source_vram"], 16), int(edge["target_vram"], 16))
+        for edge in dataset["edges"]
+    }
+    assert exported_edges == cfg.edges
+    # The caller continuation after BL must remain visible in the export.
+    assert (0x080000C0, 0x080000D0) in exported_edges
     assert "ARM7TDMI" in dataset["metadata"]["architecture"]
 
 

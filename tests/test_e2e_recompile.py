@@ -2,6 +2,8 @@ import os
 import subprocess
 import sys
 import tempfile
+import pytest
+import recompile
 from src.core.create_test_rom import create_gba_test_rom
 
 
@@ -92,4 +94,64 @@ def test_e2e_recompile_cli_with_modding_flags():
         # Clean up
         if os.path.exists(expected_c):
             os.remove(expected_c)
+
+
+@pytest.mark.parametrize("args", [["--blocks"], ["--no-build"]])
+def test_cli_missing_rom_argument(args):
+    result = subprocess.run(
+        [sys.executable, "recompile.py", *args],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 2
+    assert "Please provide a ROM path" in result.stdout
+    assert "Traceback" not in result.stderr
+
+
+def test_cli_missing_rom_file(tmp_path):
+    result = subprocess.run(
+        [sys.executable, "recompile.py", str(tmp_path / "missing.gba")],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 1
+    assert "Could not analyze" in result.stdout
+
+
+@pytest.mark.parametrize("options", [
+    ["--max-blocks", "0"], ["--max-blocks", "-1"], ["--max-blocks", "text"],
+    ["--max-blocks"], ["--widescreen", "invalid"], ["--load-textures"],
+    ["--unknown-option"],
+])
+def test_cli_rejects_invalid_options_without_traceback(options):
+    result = subprocess.run(
+        [sys.executable, "recompile.py", "roms/test/hello_gba.gba", *options],
+        capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode == 2
+    assert "Traceback" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    "console",
+    ["Game Boy Advance", "Nintendo 64", "PlayStation 1", "Super Nintendo"],
+)
+def test_cli_propagates_compiler_failure(console, tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["recompile.py", "test.rom"])
+    monkeypatch.setattr(
+        recompile,
+        "inspect_file",
+        lambda path: {"console": console, "filename": "test.rom"},
+    )
+    for lifter in ("lift_rom_to_c", "lift_mips_rom_to_c", "lift_snes_rom_to_c"):
+        monkeypatch.setattr(recompile, lifter, lambda *args, **kwargs: "int main(void) { return 0; }")
+    monkeypatch.setattr(recompile, "compile_c_to_exe", lambda *args: False)
+
+    assert recompile.main() == 1
+    output = capsys.readouterr().out
+    assert "Compilation failed" in output
+    assert "RECOMPILATION COMPLETE" not in output
 

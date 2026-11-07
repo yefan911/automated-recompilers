@@ -16,7 +16,8 @@ Features:
 import os
 import sys
 import math
-import time
+import queue
+import tempfile
 import threading
 import subprocess
 import tkinter as tk
@@ -37,6 +38,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from src.core.rom_detector import inspect_file, scan_roms_directory
 from src.core.block_analyzer import BlockDataAnalyzer
+from src.core.data_block_reader import create_block_reader
 from src.core.native_compiler import compile_c_to_exe
 from src.lifter.arm_lifter import lift_rom_to_c
 from src.lifter.mips_lifter import lift_mips_rom_to_c
@@ -92,16 +94,79 @@ class RecompilerGUI(tk.Tk):
         self.recompiled_c_path: Optional[str] = None
         self.is_busy = False
         self._all_discovered_roms: List[str] = []
-        self.viewport_running = False
-        self.viewport_frame = 0
-        self.viewport_fps = 60.0
         self.viewport_image_ref = None
-        self.viewport_keys_pressed = set()
-        self.viewport_last_time = time.time()
+        self._viewport_image_item = None
+        self._preview_reader = None
+        self._preview_reader_path = None
+        self._closed = False
+        self._ui_thread = threading.current_thread()
+        self._ui_events = queue.Queue(maxsize=1000)
+        self._ui_poll_id = None
 
         self._configure_styles()
         self._build_ui()
         self._scan_workspace_roms()
+        self._ui_poll_id = self.after(25, self._drain_ui_events)
+
+    def _dispatch_ui(self, callback):
+        """Workers enqueue Python callbacks; only the UI thread calls Tk."""
+        if self._closed:
+            return
+        if threading.current_thread() is self._ui_thread:
+            callback()
+            return
+        while not self._closed:
+            try:
+                self._ui_events.put(callback, timeout=0.1)
+                return
+            except queue.Full:
+                continue
+
+    def _drain_ui_events(self):
+        self._ui_poll_id = None
+        if self._closed:
+            return
+        for _ in range(100):
+            try:
+                callback = self._ui_events.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                callback()
+            except Exception as exc:
+                self._log(f"[Error] Interface update failed: {exc}")
+            if self._closed:
+                return
+        self._ui_poll_id = self.after(25, self._drain_ui_events)
+
+    def _close_preview_reader(self):
+        reader = self._preview_reader
+        self._preview_reader = None
+        self._preview_reader_path = None
+        if reader is not None:
+            reader.close()
+
+    def _shutdown(self):
+        if self._closed:
+            return
+        self._closed = True
+        if self._ui_poll_id is not None:
+            try:
+                self.after_cancel(self._ui_poll_id)
+            except tk.TclError:
+                pass
+            self._ui_poll_id = None
+        self._close_preview_reader()
+        while True:
+            try:
+                self._ui_events.get_nowait()
+            except queue.Empty:
+                break
+        self.viewport_image_ref = None
+
+    def destroy(self):
+        self._shutdown()
+        super().destroy()
 
     def _configure_styles(self):
         style = ttk.Style(self)
@@ -268,9 +333,9 @@ class RecompilerGUI(tk.Tk):
         self.notebook.add(self.tab_coverage, text="  📊 Metrics & Coverage  ")
         self._build_coverage_tab()
 
-        # --- Tab 5: Live Interactive Game Viewport ---
+        # --- Tab 5: ROM Data and Native Framebuffer Preview ---
         self.tab_viewport = ttk.Frame(self.notebook, padding=10)
-        self.notebook.add(self.tab_viewport, text="  🎮 Live Viewport  ")
+        self.notebook.add(self.tab_viewport, text="  🎮 ROM & Framebuffer  ")
         self._build_viewport_tab()
 
     def _build_dashboard_tab(self):
@@ -557,23 +622,20 @@ class RecompilerGUI(tk.Tk):
 
         title_box = ttk.Frame(header, style="Card.TFrame")
         title_box.pack(side="left")
-        ttk.Label(title_box, text="🎮 Live Windowed Emulation & Framebuffer Viewport", style="CardTitle.TLabel").pack(anchor="w")
-        ttk.Label(title_box, text="Real-time 60 FPS ahead-of-time recompiled execution with interactive keyboard input", style="Muted.TLabel").pack(anchor="w")
+        ttk.Label(title_box, text="🎮 ROM Data & Native Framebuffer Preview", style="CardTitle.TLabel").pack(anchor="w")
+        ttk.Label(title_box, text="Inspect ROM bytes or capture a GBA framebuffer after native execution", style="Muted.TLabel").pack(anchor="w")
 
         ctrl_bar = ttk.Frame(header, style="Card.TFrame")
         ctrl_bar.pack(side="right")
 
-        self.vp_play_btn = ttk.Button(ctrl_bar, text="▶ Run Live (60 FPS)", style="Play.TButton", command=self._viewport_toggle_play)
-        self.vp_play_btn.pack(side="left", padx=4)
-
-        self.vp_step_btn = ttk.Button(ctrl_bar, text="⏭ Step Frame", style="Action.TButton", command=self._viewport_step_single)
+        self.vp_step_btn = ttk.Button(ctrl_bar, text="ROM Data", style="Action.TButton", command=self._render_viewport_frame)
         self.vp_step_btn.pack(side="left", padx=4)
 
-        self.vp_reset_btn = ttk.Button(ctrl_bar, text="🔄 Reset", style="Action.TButton", command=self._viewport_reset)
-        self.vp_reset_btn.pack(side="left", padx=4)
+        self.vp_snapshot_btn = ttk.Button(ctrl_bar, text="Native Snapshot", style="Action.TButton", state="disabled", command=self._start_framebuffer_snapshot)
+        self.vp_snapshot_btn.pack(side="left", padx=4)
 
-        popout_btn = ttk.Button(ctrl_bar, text="🪟 Launch Native Window", style="Primary.TButton", command=self._launch_game)
-        popout_btn.pack(side="left", padx=4)
+        self.vp_launch_btn = ttk.Button(ctrl_bar, text="🪟 Native Window", style="Primary.TButton", state="disabled", command=lambda: self._launch_game(window=True))
+        self.vp_launch_btn.pack(side="left", padx=4)
 
         disp_frame = ttk.Frame(card, style="Card.TFrame")
         disp_frame.pack(fill="both", expand=True, pady=4)
@@ -587,18 +649,12 @@ class RecompilerGUI(tk.Tk):
             highlightbackground=self.colors["accent"]
         )
         self.viewport_canvas.pack(anchor="center", pady=4)
-        self.viewport_canvas.bind("<Button-1>", lambda e: self.viewport_canvas.focus_set())
-        self.viewport_canvas.bind("<KeyPress>", self._on_viewport_key_down)
-        self.viewport_canvas.bind("<KeyRelease>", self._on_viewport_key_up)
 
         hud_bar = ttk.Frame(card, style="Card.TFrame")
         hud_bar.pack(fill="x", pady=(6, 0))
 
-        self.viewport_status_var = tk.StringVar(value="Status: Ready | Resolution: 720x480 (Mode 3 scaled 3x) | Target: GBA | FPS: 0.0")
+        self.viewport_status_var = tk.StringVar(value="Status: Select a ROM to inspect its data")
         ttk.Label(hud_bar, textvariable=self.viewport_status_var, font=("Consolas", 9), foreground=self.colors["cyan"]).pack(side="left")
-
-        hint_text = "Controls: Arrows = D-Pad | Z/X = A/B | Space = Select | Enter = Start | A/S = L/R | Click viewport to focus"
-        ttk.Label(hud_bar, text=hint_text, font=("Segoe UI", 9), foreground=self.colors["text_dim"]).pack(side="right")
 
         self._render_initial_viewport()
 
@@ -615,120 +671,118 @@ class RecompilerGUI(tk.Tk):
 
         draw.rectangle([w//2 - 220, h//2 - 50, w//2 + 220, h//2 + 50], fill=(24, 32, 52), outline=(56, 189, 248), width=2)
         draw.text((w//2 - 170, h//2 - 30), "AUTOMATED RECOMPILER VIEWPORT", fill=(205, 214, 244))
-        draw.text((w//2 - 185, h//2), "Press 'Run Live (60 FPS)' to Start Interactive Execution", fill=(166, 227, 161))
-        draw.text((w//2 - 150, h//2 + 22), "Supports GBA, N64, PS1 & SNES Live Framebuffers", fill=(166, 173, 200))
+        draw.text((w//2 - 170, h//2), "Select a ROM, then choose ROM Data", fill=(166, 227, 161))
+        draw.text((w//2 - 170, h//2 + 22), "Native Snapshot requires a compiled GBA binary", fill=(166, 173, 200))
+        self._display_preview_image(img)
 
+    def _display_preview_image(self, img):
         self.viewport_image_ref = ImageTk.PhotoImage(img)
-        self.viewport_canvas.create_image(w//2, h//2, image=self.viewport_image_ref)
-
-    def _viewport_toggle_play(self):
-        self.viewport_running = not self.viewport_running
-        if self.viewport_running:
-            self.vp_play_btn.config(text="⏸ Pause", style="Action.TButton")
-            self.viewport_last_time = time.time()
-            self._viewport_tick()
+        if self._viewport_image_item is None:
+            self._viewport_image_item = self.viewport_canvas.create_image(360, 240, image=self.viewport_image_ref)
         else:
-            self.vp_play_btn.config(text="▶ Run Live (60 FPS)", style="Play.TButton")
+            self.viewport_canvas.itemconfigure(self._viewport_image_item, image=self.viewport_image_ref)
 
-    def _viewport_step_single(self):
-        self._render_viewport_frame()
-
-    def _viewport_reset(self):
-        self.viewport_frame = 0
-        self.viewport_running = False
-        self.vp_play_btn.config(text="▶ Run Live (60 FPS)", style="Play.TButton")
-        self._render_initial_viewport()
-
-    def _on_viewport_key_down(self, event):
-        self.viewport_keys_pressed.add(event.keysym)
-
-    def _on_viewport_key_up(self, event):
-        self.viewport_keys_pressed.discard(event.keysym)
-
-    def _viewport_tick(self):
-        if not self.viewport_running:
-            return
-        t0 = time.time()
-        self._render_viewport_frame()
-        dt = time.time() - t0
-        self.viewport_frame += 1
-
-        elapsed = time.time() - self.viewport_last_time
-        if elapsed >= 0.5:
-            self.viewport_fps = round(self.viewport_frame / max(0.001, elapsed), 1)
-            self.viewport_last_time = time.time()
-            self.viewport_frame = 0
-
-        delay = max(1, int((0.0166 - dt) * 1000))
-        self.after(delay, self._viewport_tick)
+    def _get_preview_reader(self):
+        path = self.current_rom_path
+        if path != self._preview_reader_path:
+            self._close_preview_reader()
+            if path and os.path.isfile(path):
+                self._preview_reader = create_block_reader(path)
+                self._preview_reader_path = path
+        return self._preview_reader
 
     def _render_viewport_frame(self):
         if not HAS_PIL or Image is None or ImageTk is None:
+            self.viewport_status_var.set("Status: Install Pillow to display ROM data and native snapshots")
             return
         w, h = 720, 480
         img = Image.new("RGB", (w, h), (10, 10, 20))
         draw = ImageDraw.Draw(img)
 
-        console = (self.current_rom_info or {}).get("console", "Game Boy Advance")
-        title = (self.current_rom_info or {}).get("title", "Game ROM")
-
-        phase = (self.viewport_frame * 3) % 360
-        for y in range(0, h, 8):
-            shade = int(25 + 15 * math.sin(math.radians(phase + y * 2)))
-            draw.rectangle([0, y, w, y + 8], fill=(shade // 2, shade // 2, shade + 30))
-
-        reader = None
-        if self.current_rom_path and os.path.isfile(self.current_rom_path):
+        info = self.current_rom_info or {}
+        console = info.get("console", "Unknown console")
+        title = info.get("title") or os.path.basename(self.current_rom_path or "No ROM selected")
+        draw.text((30, 25), f"ROM: {title}", fill=(205, 214, 244))
+        draw.text((30, 45), f"Console: {console}", fill=(56, 189, 248))
+        try:
+            reader = self._get_preview_reader()
+            if reader is None:
+                self._render_initial_viewport()
+                self.viewport_status_var.set("Status: Select a ROM to inspect its data")
+                return
+            raw_entry = info.get("entry_point")
             try:
-                from src.core.data_block_reader import create_block_reader
-                reader = create_block_reader(self.current_rom_path)
-            except Exception:
-                reader = None
+                address = int(raw_entry, 0) if isinstance(raw_entry, str) else int(raw_entry)
+            except (TypeError, ValueError):
+                address = getattr(reader, "text_vram", getattr(reader, "base_vram", 0x008000))
+            if "Game Boy Advance" in console:
+                address = 0x080000C0
+            data = reader.read_bytes(address, 256)
+            draw.text((30, 75), f"ROM bytes at guest address 0x{address:08X}", fill=(166, 227, 161))
+            for row in range(0, len(data), 16):
+                chunk = data[row:row + 16]
+                ascii_text = "".join(chr(b) if 32 <= b < 127 else "." for b in chunk)
+                draw.text((30, 110 + (row // 16) * 18), f"{address + row:08X}  {chunk.hex(' '):47}  {ascii_text}", fill=(205, 214, 244))
+            if not data:
+                draw.text((30, 110), "No ROM bytes are mapped at this address.", fill=(249, 226, 175))
+            self.viewport_status_var.set(f"Status: ROM data preview | {len(data)} bytes | {console}")
+        except (OSError, ValueError) as exc:
+            self._close_preview_reader()
+            draw.text((30, 110), "ROM data could not be read. See the build log.", fill=(243, 139, 168))
+            self.viewport_status_var.set("Status: ROM data preview failed")
+            self._log(f"[Error] ROM data preview failed: {exc}")
+        self._display_preview_image(img)
 
-        if "Game Boy" in console:
-            draw.text((30, 30), f"CONSOLE: Game Boy Advance (ARM7TDMI Mode 3)", fill=(56, 189, 248))
-            draw.text((30, 50), f"ROM: {title}", fill=(205, 214, 244))
-            draw.text((30, 70), "REG_DISPCNT: 0x0403 (Mode 3 | BG2 Active)", fill=(166, 227, 161))
+    def _start_framebuffer_snapshot(self):
+        if self.is_busy:
+            return
+        if not HAS_PIL:
+            messagebox.showwarning("Pillow Required", "Install Pillow to display native framebuffer snapshots.")
+            return
+        if "Game Boy Advance" not in (self.current_rom_info or {}).get("console", ""):
+            messagebox.showwarning("GBA Snapshot", "Native framebuffer snapshots currently support compiled GBA ROMs.")
+            return
+        if not self.recompiled_exe_path or not os.path.isfile(self.recompiled_exe_path):
+            messagebox.showwarning("No Binary", "Compile this ROM before capturing its native framebuffer.")
+            return
+        self._set_busy(True)
+        self.viewport_status_var.set("Status: Running native GBA binary to capture a snapshot...")
+        threading.Thread(target=self._run_framebuffer_snapshot, args=(self.current_rom_path, os.path.abspath(self.recompiled_exe_path)), daemon=True).start()
 
-            # Decode GBA data blocks from reader into viewport
-            if reader:
-                # Read sample tile / framebuffer block from ROM
-                sample_bytes = reader.read_bytes(0x080000C0, 64)
-                if sample_bytes:
-                    draw.text((30, 90), f"Data Block [0x080000C0]: {sample_bytes[:16].hex(' ')}", fill=(166, 173, 200))
+    def _run_framebuffer_snapshot(self, rom_path, exe_path):
+        try:
+            with tempfile.TemporaryDirectory(prefix="recompiler-framebuffer-") as directory:
+                path = os.path.join(directory, "frame.ppm")
+                result = subprocess.run(
+                    [exe_path, "--headless", "--framebuffer", path],
+                    capture_output=True, text=True, errors="replace", timeout=15,
+                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+                )
+                if result.returncode != 0:
+                    raise RuntimeError(f"Native snapshot exited with code {result.returncode}: {(result.stderr or result.stdout)[-2000:]}")
+                if os.path.getsize(path) > 240 * 160 * 3 + 512:
+                    raise ValueError("Unexpected native framebuffer file size")
+                with Image.open(path) as image:
+                    if image.format != "PPM" or image.size != (240, 160):
+                        raise ValueError("Native framebuffer must be a 240x160 PPM image")
+                    frame = image.convert("RGB").copy()
+            self._dispatch_ui(lambda: self._display_framebuffer_snapshot(rom_path, frame))
+        except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
+            error = str(exc)
+            self._log(f"[Error] Native framebuffer snapshot failed: {error}")
+            self._dispatch_ui(lambda: self._snapshot_failed(rom_path, error))
+        finally:
+            self._set_busy(False)
 
-            bx, by = 360, 240
-            if "Up" in self.viewport_keys_pressed or "w" in self.viewport_keys_pressed: by -= 30
-            if "Down" in self.viewport_keys_pressed or "s" in self.viewport_keys_pressed: by += 30
-            if "Left" in self.viewport_keys_pressed or "a" in self.viewport_keys_pressed: bx -= 30
-            if "Right" in self.viewport_keys_pressed or "d" in self.viewport_keys_pressed: bx += 30
-            draw.rectangle([bx - 40, by - 40, bx + 40, by + 40], fill=(249, 226, 175), outline=(243, 139, 168), width=3)
-            draw.text((bx - 22, by - 8), "SPRITE", fill=(17, 17, 27))
-        elif "Super Nintendo" in console:
-            draw.text((30, 30), f"CONSOLE: Super Nintendo (W65C816S Mode 1)", fill=(192, 132, 252))
-            draw.text((30, 50), f"ROM: {title}", fill=(205, 214, 244))
-            draw.text((30, 70), "PPU BG1/BG2 Tilemap Active", fill=(166, 227, 161))
-            if reader:
-                snes_hdr = reader.read_bytes(0x008000, 32)
-                if snes_hdr:
-                    draw.text((30, 90), f"LoROM Data Block [0x008000]: {snes_hdr[:16].hex(' ')}", fill=(166, 173, 200))
-        else:
-            draw.text((30, 30), f"CONSOLE: MIPS Target (N64 / PS1)", fill=(249, 226, 175))
-            draw.text((30, 50), f"ROM: {title}", fill=(205, 214, 244))
-            draw.text((30, 70), "RDRAM 32-bit Direct Framebuffer Active", fill=(166, 227, 161))
-            if reader:
-                mips_block = reader.read_bytes(getattr(reader, 'text_vram', 0x80000000), 32)
-                if mips_block:
-                    draw.text((30, 90), f"MIPS Data Block: {mips_block[:16].hex(' ')}", fill=(166, 173, 200))
+    def _display_framebuffer_snapshot(self, rom_path, frame):
+        if rom_path != self.current_rom_path:
+            return
+        self._display_preview_image(frame.resize((720, 480), Image.Resampling.NEAREST))
+        self.viewport_status_var.set("Status: Native GBA framebuffer snapshot | 240x160 | Execution completed")
 
-        keys_str = " ".join(f"[{k}]" for k in sorted(self.viewport_keys_pressed)) or "[None]"
-        draw.text((30, h - 35), f"Active Input: {keys_str}", fill=(249, 226, 175))
-
-        self.viewport_image_ref = ImageTk.PhotoImage(img)
-        self.viewport_canvas.create_image(w // 2, h // 2, image=self.viewport_image_ref)
-
-        status = f"Status: Live Execution (60 FPS) | Target: {console} | Frame: {self.viewport_frame}"
-        self.viewport_status_var.set(status)
+    def _snapshot_failed(self, rom_path, error):
+        if rom_path == self.current_rom_path:
+            self.viewport_status_var.set("Status: Native framebuffer snapshot failed; see the build log")
 
     def _log(self, text: str):
         def _append():
@@ -755,10 +809,7 @@ class RecompilerGUI(tk.Tk):
                 pass
             self.console_text.see("end")
 
-        if threading.current_thread() is threading.main_thread():
-            _append()
-        else:
-            self.after(0, _append)
+        self._dispatch_ui(_append)
 
     def _clear_console(self):
         self.console_text.delete("1.0", "end")
@@ -779,7 +830,7 @@ class RecompilerGUI(tk.Tk):
         if os.path.exists(rom_dir):
             for root, _, files in os.walk(rom_dir):
                 for f in files:
-                    if f.endswith((".gba", ".z64", ".n64", ".v64", ".bin", ".exe", ".iso", ".sfc", ".smc")) and not f.startswith("."):
+                    if f.lower().endswith((".gba", ".z64", ".n64", ".v64", ".bin", ".exe", ".iso", ".sfc", ".smc")) and not f.startswith("."):
                         rel_path = os.path.relpath(os.path.join(root, f), ".")
                         discovered.append(rel_path)
 
@@ -821,12 +872,25 @@ class RecompilerGUI(tk.Tk):
             self._load_rom(chosen)
 
     def _load_rom(self, rom_path: str):
+        if rom_path != self.current_rom_path:
+            self._close_preview_reader()
         self.current_rom_path = rom_path
-        info = inspect_file(rom_path)
+        self.current_rom_info = None
+        self.recompiled_exe_path = None
+        self.recompiled_c_path = None
+        self._refresh_launch_controls()
+        self._load_c_source()
+        try:
+            info = inspect_file(rom_path)
+        except (OSError, ValueError) as exc:
+            info = None
+            self._log(f"[Error] Could not inspect ROM: {exc}")
         self.current_rom_info = info
 
         if not info:
             self.info_text_var.set(f"Could not parse file:\n{os.path.basename(rom_path)}")
+            self._render_initial_viewport()
+            self.viewport_status_var.set("Status: ROM could not be inspected")
             return
 
         lines = [
@@ -851,9 +915,6 @@ class RecompilerGUI(tk.Tk):
 
         if os.path.isfile(exe_cand):
             self.recompiled_exe_path = exe_cand
-            self.play_btn.config(state="normal", text=f"▶ Run {os.path.basename(exe_cand)}")
-        else:
-            self.play_btn.config(state="disabled", text="Run Recompiled Game")
 
         if os.path.isfile(c_cand):
             self.recompiled_c_path = c_cand
@@ -861,13 +922,26 @@ class RecompilerGUI(tk.Tk):
         self._log(f"-> Loaded ROM: {os.path.basename(rom_path)} [{info.get('console')}]")
         self._refresh_entropy_canvas()
         self._load_c_source()
+        self._refresh_launch_controls()
+        self._render_viewport_frame()
+
+    def _refresh_launch_controls(self):
+        ready = bool(self.recompiled_exe_path and os.path.isfile(self.recompiled_exe_path) and not self.is_busy)
+        self.play_btn.config(state="normal" if ready else "disabled", text=f"▶ Run {os.path.basename(self.recompiled_exe_path)}" if ready else "Run Recompiled Game")
+        self.vp_launch_btn.config(state="normal" if ready else "disabled")
+        gba = "Game Boy Advance" in (self.current_rom_info or {}).get("console", "")
+        self.vp_snapshot_btn.config(state="normal" if ready and gba and HAS_PIL else "disabled")
 
     def _refresh_entropy_canvas(self):
         if not self.current_rom_path or not os.path.isfile(self.current_rom_path):
             return
 
-        with open(self.current_rom_path, "rb") as f:
-            sample = f.read(min(os.path.getsize(self.current_rom_path), 2097152))
+        try:
+            with open(self.current_rom_path, "rb") as f:
+                sample = f.read(min(os.path.getsize(self.current_rom_path), 2097152))
+        except OSError as exc:
+            self._log(f"[Error] Entropy preview failed: {exc}")
+            return
 
         num_slices = 32
         slice_len = max(1, len(sample) // num_slices)
@@ -915,9 +989,13 @@ class RecompilerGUI(tk.Tk):
             self.source_text.insert("1.0", "/* No recompiled C source available yet.\n   Click 'Recompile ROM to Native .EXE' to generate C source code. */")
             return
 
-        with open(self.recompiled_c_path, "r", encoding="utf-8", errors="replace") as f:
-            lines = [f.readline() for _ in range(800)]
-            preview_code = "".join(lines)
+        try:
+            with open(self.recompiled_c_path, "r", encoding="utf-8", errors="replace") as f:
+                lines = [f.readline() for _ in range(800)]
+                preview_code = "".join(lines)
+        except OSError as exc:
+            self._log(f"[Error] C source preview failed: {exc}")
+            return
 
         self.source_text.delete("1.0", "end")
         self.source_text.insert("1.0", preview_code)
@@ -948,12 +1026,12 @@ class RecompilerGUI(tk.Tk):
             return
 
         self._set_busy(True)
-        threading.Thread(target=self._run_inspect_blocks_thread, daemon=True).start()
+        threading.Thread(target=self._run_inspect_blocks_thread, args=(self.current_rom_path,), daemon=True).start()
 
-    def _run_inspect_blocks_thread(self):
+    def _run_inspect_blocks_thread(self, rom_path):
         try:
-            self._log(f"\n[Inspect] Analyzing structural blocks for {os.path.basename(self.current_rom_path)}...")
-            analyzer = BlockDataAnalyzer(self.current_rom_path)
+            self._log(f"\n[Inspect] Analyzing structural blocks for {os.path.basename(rom_path)}...")
+            analyzer = BlockDataAnalyzer(rom_path)
 
             self._log("========================================================")
             self._log(f"  STRUCTURAL ROM BLOCK BREAKDOWN: {analyzer.filename}")
@@ -968,7 +1046,7 @@ class RecompilerGUI(tk.Tk):
                 self._log(f"Entry Vector: {hex(analyzer.entry_vram)}")
 
             self._log("\nEntropy and Control Flow Graph sampling complete.")
-            self.after(0, self._refresh_entropy_canvas)
+            self._dispatch_ui(lambda: self._refresh_entropy_canvas() if rom_path == self.current_rom_path else None)
         except Exception as e:
             self._log(f"Error during block analysis: {e}")
         finally:
@@ -981,16 +1059,26 @@ class RecompilerGUI(tk.Tk):
         if self.is_busy:
             return
 
-        self._set_busy(True)
-        threading.Thread(target=self._run_recompile_thread, daemon=True).start()
-
-    def _run_recompile_thread(self):
         try:
-            rom_path = self.current_rom_path
-            info = self.current_rom_info or inspect_file(rom_path)
-            console = info.get("console", "")
             max_blocks = self.max_blocks_var.get()
+            if max_blocks <= 0:
+                raise ValueError("Maximum basic blocks must be a positive integer.")
             no_build = self.no_build_var.get()
+        except (tk.TclError, ValueError) as exc:
+            messagebox.showwarning("Invalid Build Settings", str(exc))
+            return
+        rom_path = self.current_rom_path
+        info = dict(self.current_rom_info or {})
+        self.recompiled_exe_path = None
+        self._set_busy(True)
+        threading.Thread(target=self._run_recompile_thread, args=(rom_path, info, max_blocks, no_build), daemon=True).start()
+
+    def _run_recompile_thread(self, rom_path, info, max_blocks, no_build):
+        try:
+            info = info or inspect_file(rom_path)
+            if not info:
+                raise ValueError("ROM metadata could not be read.")
+            console = info.get("console", "")
 
             self._log("\n========================================================")
             self._log(f"  [1/4] ROM Identification: {info.get('filename')}")
@@ -1037,8 +1125,7 @@ class RecompilerGUI(tk.Tk):
             with open(out_c_path, "w", encoding="utf-8") as f:
                 f.write(c_code)
             self._log(f"Saved: {out_c_path} ({len(c_code.splitlines())} lines)")
-            self.recompiled_c_path = out_c_path
-            self.after(0, self._load_c_source)
+            self._dispatch_ui(lambda: self._publish_build_result(rom_path, out_c_path))
             del c_code
 
             if no_build:
@@ -1052,33 +1139,44 @@ class RecompilerGUI(tk.Tk):
             success = compile_c_to_exe(out_c_path, out_exe_path)
 
             if success and os.path.isfile(out_exe_path):
-                self.recompiled_exe_path = out_exe_path
-                self.after(0, lambda p=out_exe_path: self.play_btn.config(state="normal", text=f"▶ Run {os.path.basename(p)}"))
+                self._dispatch_ui(lambda: self._publish_build_result(rom_path, out_c_path, out_exe_path))
                 self._log("\n========================================================")
                 self._log(f"  SUCCESS: Standalone Binary Built: {out_exe_path}")
                 self._log("========================================================")
                 self._log("Click '▶ Run Recompiled Game' to test execution directly!\n")
             else:
-                self._log("\n[Notice] C code emitted successfully. Native compilation skipped or failed.")
+                self._log("\n[Error] Native compilation failed; generated C source is available.")
         except Exception as e:
             self._log(f"\n[Error] Recompilation failed: {e}")
         finally:
             self._set_busy(False)
 
-    def _launch_game(self):
+    def _publish_build_result(self, rom_path, c_path, exe_path=None):
+        if rom_path != self.current_rom_path:
+            return
+        self.recompiled_c_path = c_path
+        self.recompiled_exe_path = exe_path
+        self._load_c_source()
+        self._refresh_launch_controls()
+
+    def _launch_game(self, window=None):
         if not self.recompiled_exe_path or not os.path.isfile(self.recompiled_exe_path):
             messagebox.showwarning("No Binary", "Recompiled executable not found. Please compile first.")
             return
 
         cmd = [os.path.abspath(self.recompiled_exe_path)]
-        if self.window_mode_var.get():
+        if window is None:
+            window = self.window_mode_var.get()
+        if window:
             cmd.append("--window")
+        else:
+            cmd.append("--headless")
 
         self._log(f"\n-> Launching: {' '.join(cmd)}")
         try:
             creationflags = 0
-            if sys.platform == "win32" and not self.window_mode_var.get():
-                creationflags = subprocess.CREATE_NEW_CONSOLE
+            if sys.platform == "win32" and not window:
+                creationflags = subprocess.CREATE_NO_WINDOW
 
             proc = subprocess.Popen(cmd, creationflags=creationflags)
             self._log(f"  * Process started with PID {proc.pid}")
@@ -1112,7 +1210,7 @@ class RecompilerGUI(tk.Tk):
         def _apply():
             self.is_busy = busy
             if busy:
-                self.status_pill.config(text="● Recompiling...", style="Badge.TLabel")
+                self.status_pill.config(text="● Working...", style="Badge.TLabel")
                 self.progress_bar.start(10)
                 self.recompile_btn.config(state="disabled")
                 self.blocks_btn.config(state="disabled")
@@ -1121,11 +1219,9 @@ class RecompilerGUI(tk.Tk):
                 self.progress_bar.stop()
                 self.recompile_btn.config(state="normal")
                 self.blocks_btn.config(state="normal")
+            self._refresh_launch_controls()
 
-        if threading.current_thread() is threading.main_thread():
-            _apply()
-        else:
-            self.after(0, _apply)
+        self._dispatch_ui(_apply)
 
 
 def main():

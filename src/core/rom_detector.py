@@ -10,6 +10,7 @@ and header metadata across GBA, N64, PS1, NES, and SNES.
 import os
 import sys
 import struct
+import re
 from typing import Dict, Any, Optional
 
 GBA_LOGO_START = bytes([
@@ -91,64 +92,204 @@ def detect_n64(data: bytes) -> Optional[Dict[str, Any]]:
     }
 
 
-def detect_ps1(data: bytes) -> Optional[Dict[str, Any]]:
-    # 1. PS-X EXE direct format
-    if data.startswith(b"PS-X EXE"):
-        initial_pc = struct.unpack("<I", data[0x10:0x14])[0]
-        text_vram = struct.unpack("<I", data[0x18:0x1C])[0]
-        text_size = struct.unpack("<I", data[0x1C:0x20])[0]
-        initial_sp = struct.unpack("<I", data[0x30:0x34])[0]
-        marker = data[0x4C:0x60].decode('ascii', errors='ignore').strip('\x00').strip()
-        return {
-            "console": "Sony PlayStation 1 (PS-X EXE)",
-            "architecture": "MIPS I (R3000A 32-bit + GTE Coprocessor 2)",
-            "endianness": "little",
-            "entry_point": hex(initial_pc),
-            "text_vram": hex(text_vram),
-            "text_size": text_size,
-            "initial_sp": hex(initial_sp),
-            "marker": marker,
-            "size_bytes": len(data),
-        }
-
-    # 2. PS1 CD Image (ISO-9660 raw 2352-byte bin or standard 2048-byte iso)
-    psx_idx = data.find(b"PS-X EXE")
-    if psx_idx != -1 and len(data) >= psx_idx + 0x40:
-        hdr = data[psx_idx:psx_idx+2048]
-        initial_pc = struct.unpack("<I", hdr[0x10:0x14])[0]
-        text_vram = struct.unpack("<I", hdr[0x18:0x1C])[0]
-        text_size = struct.unpack("<I", hdr[0x1C:0x20])[0]
-        initial_sp = struct.unpack("<I", hdr[0x30:0x34])[0]
-        marker = hdr[0x4C:0x60].decode('ascii', errors='ignore').strip('\x00').strip()
-
-        # Check for Volume Descriptor title
-        title = "PlayStation CD Image"
-        for pvd_offset in [37632 + 24, 32768]:  # raw 2352-byte CD or 2048-byte ISO
-            if len(data) >= pvd_offset + 72 and data[pvd_offset+1:pvd_offset+6] == b"CD001":
-                vol_id = data[pvd_offset+40:pvd_offset+72].decode('ascii', errors='ignore').strip('\x00').strip()
-                if vol_id:
-                    title = vol_id
-                break
-
-        return {
-            "console": "Sony PlayStation 1 (CD Image)",
-            "architecture": "MIPS I (R3000A 32-bit + GTE Coprocessor 2)",
-            "endianness": "little",
-            "entry_point": hex(initial_pc),
-            "text_vram": hex(text_vram),
-            "text_size": text_size,
-            "initial_sp": hex(initial_sp),
-            "marker": marker,
-            "title": title,
-            "exe_offset": psx_idx,
-            "size_bytes": len(data),
-        }
-
+def _ps1_cd_layout(data: bytes):
+    for sector_size, user_offset in ((2352, 24), (2352, 16), (2048, 0)):
+        pvd = 16 * sector_size + user_offset
+        if data[pvd + 1:pvd + 6] == b"CD001":
+            return sector_size, user_offset
     return None
 
 
+def _ps1_header_info(header: bytes, offset: int, size: int, layout=None, title=None):
+    if len(header) < 2048 or not header.startswith(b"PS-X EXE"):
+        return None
+    if layout is None:
+        if offset == 0:
+            layout = (2048, 0)
+        elif offset >= 24 and (offset - 24) % 2352 == 0:
+            layout = (2352, 24)
+        elif offset >= 16 and (offset - 16) % 2352 == 0:
+            layout = (2352, 16)
+        elif offset % 2048 == 0:
+            layout = (2048, 0)
+        else:
+            return None
+    elif (offset - layout[1]) % layout[0]:
+        return None
+    initial_pc, initial_gp, text_vram, text_size = struct.unpack_from("<IIII", header, 0x10)
+    stack_base, stack_offset = struct.unpack_from("<II", header, 0x30)
+    physical_address = text_vram & 0x1FFFFFFF
+    if text_vram >> 29 not in (0, 4, 5) or physical_address + text_size > 0x200000:
+        return None
+    info = {
+        "console": "Sony PlayStation 1 (PS-X EXE)" if offset == 0 else "Sony PlayStation 1 (CD Image)",
+        "architecture": "MIPS I (R3000A 32-bit + GTE Coprocessor 2)",
+        "endianness": "little",
+        "entry_point": hex(initial_pc),
+        "initial_gp": hex(initial_gp),
+        "text_vram": hex(text_vram),
+        "text_size": text_size,
+        "initial_sp": hex((stack_base + stack_offset) & 0xFFFFFFFF if stack_base else 0),
+        "marker": header[0x4C:0x60].decode("ascii", errors="ignore").strip("\x00 "),
+        "exe_offset": offset,
+        "sector_size": layout[0],
+        "sector_user_offset": layout[1],
+        "size_bytes": size,
+    }
+    if offset:
+        info["title"] = title or "PlayStation CD Image"
+    return info
+
+
+def detect_ps1(data: bytes) -> Optional[Dict[str, Any]]:
+    layout = _ps1_cd_layout(data)
+    title = None
+    if layout:
+        pvd = 16 * layout[0] + layout[1]
+        title = data[pvd + 40:pvd + 72].decode("ascii", errors="ignore").strip("\x00 ")
+    start = 0
+    while True:
+        offset = data.find(b"PS-X EXE", start)
+        if offset < 0:
+            return None
+        info = _ps1_header_info(data[offset:offset + 2048], offset, len(data), layout, title)
+        if info:
+            return info
+        start = offset + 8
+
+
+def _read_cd_payload(stream, layout, offset: int, size: int, file_size: int) -> bytes:
+    """Read an ISO logical byte range without raw-sector framing bytes."""
+    if offset < 0 or size < 0:
+        return b""
+    sector_size, user_offset = layout
+    parts = []
+    while size:
+        sector, within = divmod(offset, 2048)
+        amount = min(size, 2048 - within)
+        physical = sector * sector_size + user_offset + within
+        if physical + amount > file_size:
+            return b""
+        stream.seek(physical)
+        part = stream.read(amount)
+        if len(part) != amount:
+            return b""
+        parts.append(part)
+        offset += amount
+        size -= amount
+    return b"".join(parts)
+
+
+def _ps1_boot_header(stream, layout, sample: bytes, file_size: int):
+    """Resolve SYSTEM.CNF's BOOT path through bounded ISO-9660 directories."""
+    pvd = 16 * layout[0] + layout[1]
+    root = sample[pvd + 156:pvd + 190]
+    if len(root) < 34 or root[0] < 34:
+        return False, None
+
+    def directory(record):
+        lba = struct.unpack_from("<I", record, 2)[0]
+        length = struct.unpack_from("<I", record, 10)[0]
+        if length > 131072:
+            return {}
+        data = _read_cd_payload(stream, layout, lba * 2048, length, file_size)
+        entries = {}
+        pos = 0
+        while pos < len(data):
+            rec_len = data[pos]
+            if not rec_len:
+                pos = ((pos // 2048) + 1) * 2048
+                continue
+            record = data[pos:pos + rec_len]
+            if len(record) != rec_len or rec_len < 34 or record[32] > rec_len - 33:
+                return {}
+            name = record[33:33 + record[32]].decode("ascii", errors="ignore").upper().split(";")[0]
+            entries[name] = record
+            pos += rec_len
+        return entries
+
+    entries = directory(root)
+    config = entries.get("SYSTEM.CNF")
+    if config is None:
+        return False, None
+    config_size = struct.unpack_from("<I", config, 10)[0]
+    if config_size > 65536:
+        return True, None
+    config_lba = struct.unpack_from("<I", config, 2)[0]
+    config_data = _read_cd_payload(stream, layout, config_lba * 2048, config_size, file_size)
+    match = re.search(rb"(?im)^\s*BOOT\s*=\s*cdrom:\s*[\\/]*([^\r\n]+)", config_data)
+    if not match:
+        return False, None
+    path = match.group(1).decode("ascii", errors="ignore").strip().replace("/", "\\")
+    components = [part.upper().split(";")[0] for part in path.split("\\") if part]
+    if not components or len(components) > 16 or any(part in (".", "..") for part in components):
+        return True, None
+    for index, component in enumerate(components):
+        record = entries.get(component)
+        if record is None:
+            return True, None
+        if index < len(components) - 1:
+            if not record[25] & 2:
+                return True, None
+            entries = directory(record)
+    if record[25] & 2:
+        return True, None
+    lba = struct.unpack_from("<I", record, 2)[0]
+    length = struct.unpack_from("<I", record, 10)[0]
+    header = _read_cd_payload(stream, layout, lba * 2048, min(length, 2048), file_size)
+    physical = lba * layout[0] + layout[1]
+    info = _ps1_header_info(header, physical, file_size, layout)
+    if info and 2048 + info["text_size"] > length:
+        return True, None
+    return True, info
+
+
+def find_ps1_executable(filepath: str, sample: bytes = None) -> Optional[Dict[str, Any]]:
+    """Locate a standalone or CD boot executable without loading the whole image."""
+    file_size = os.path.getsize(filepath)
+    with open(filepath, "rb") as stream:
+        if sample is None:
+            sample = stream.read(131072)
+        layout = _ps1_cd_layout(sample)
+        if layout:
+            boot_declared, info = _ps1_boot_header(stream, layout, sample, file_size)
+            if boot_declared:
+                if info:
+                    pvd = 16 * layout[0] + layout[1]
+                    info["title"] = sample[pvd + 40:pvd + 72].decode("ascii", errors="ignore").strip("\x00 ")
+                return info
+        info = detect_ps1(sample)
+        if info or layout is None:
+            if info:
+                info["size_bytes"] = file_size
+            return info
+        # Some discs have no SYSTEM.CNF. Search sector-aligned headers in chunks.
+        stream.seek(0)
+        tail = b""
+        position = 0
+        while True:
+            chunk = stream.read(131072)
+            if not chunk:
+                return None
+            data = tail + chunk
+            start = 0
+            while True:
+                local = data.find(b"PS-X EXE", start)
+                if local < 0:
+                    break
+                physical = position - len(tail) + local
+                info = _ps1_header_info(data[local:local + 2048], physical, file_size, layout)
+                if info:
+                    pvd = 16 * layout[0] + layout[1]
+                    info["title"] = sample[pvd + 40:pvd + 72].decode("ascii", errors="ignore").strip("\x00 ")
+                    return info
+                start = local + 8
+            tail = data[-2047:]
+            position += len(chunk)
+
+
 def detect_nes(data: bytes) -> Optional[Dict[str, Any]]:
-    if data.startswith(b"NES\x1a"):
+    if len(data) >= 16 and data.startswith(b"NES\x1a"):
         prg_rom_chunks = data[4]  # in 16KB units
         chr_rom_chunks = data[5]  # in 8KB units
         flags6 = data[6]
@@ -161,8 +302,8 @@ def detect_nes(data: bytes) -> Optional[Dict[str, Any]]:
         # Read 6502 Reset vector from end of PRG ROM ($FFFC)
         entry_point = None
         prg_size = prg_rom_chunks * 16384
-        reset_vec_offset = 16 + prg_size - 4
-        if len(data) >= reset_vec_offset + 2:
+        reset_vec_offset = 16 + (512 if has_trainer else 0) + prg_size - 4
+        if prg_size and len(data) >= reset_vec_offset + 2:
             reset_val = data[reset_vec_offset] | (data[reset_vec_offset + 1] << 8)
             entry_point = hex(reset_val)
 
@@ -182,29 +323,41 @@ def detect_nes(data: bytes) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _snes_header_info(header: bytes, offset: int, copier_size: int, mapping: str, file_size: int):
+    if len(header) < 64:
+        return None
+    map_mode = header[0x15]
+    modes = {"LoROM": (0x20, 0x22, 0x23, 0x30, 0x32), "HiROM": (0x21, 0x31), "ExHiROM": (0x25, 0x35)}
+    reset = struct.unpack_from("<H", header, 0x3C)[0]
+    if map_mode not in modes[mapping] or reset < 0x8000:
+        return None
+    return {
+        "console": "Super Nintendo (SNES)",
+        "architecture": "W65C816S (16-bit 65816)",
+        "endianness": "little",
+        "entry_point": hex(reset),
+        "title": header[:21].decode("ascii", errors="ignore").strip("\x00 "),
+        "map_mode": hex(map_mode),
+        "mapping": mapping,
+        "header_offset": offset,
+        "copier_header_size": copier_size,
+        "size_bytes": file_size,
+    }
+
+
 def detect_snes(data: bytes) -> Optional[Dict[str, Any]]:
-    # Standard SNES header offsets: 0x7FC0 (LoROM), 0xFFC0 (HiROM)
-    # Also check +512 byte offsets for copier/SMC headers (0x81C0, 0x101C0)
-    for offset in [0x7FC0, 0xFFC0, 0x81C0, 0x101C0]:
-        if len(data) < offset + 0x50:
-            continue
-        h = data[offset:offset+0x50]
-        # map_mode at offset 0x15 in standard header
-        map_mode = h[0x15]
-        if map_mode in (0x20, 0x21, 0x22, 0x23, 0x25, 0x30, 0x31, 0x32, 0x35):
-            title = h[0:21].decode('ascii', errors='ignore').strip()
-            # Vectors: Emu RESET vector at 0x3C
-            emu_reset = h[0x3C] | (h[0x3D] << 8)
-            return {
-                "console": "Super Nintendo (SNES)",
-                "architecture": "W65C816S (16-bit 65816)",
-                "endianness": "little",
-                "entry_point": hex(emu_reset),
-                "title": title,
-                "map_mode": hex(map_mode),
-                "size_bytes": len(data),
-            }
-    return None
+    candidates = []
+    for copier_size in (0, 512):
+        for base, mapping in ((0x7FC0, "LoROM"), (0xFFC0, "HiROM"), (0x40FFC0, "ExHiROM")):
+            offset = base + copier_size
+            header = data[offset:offset + 64]
+            info = _snes_header_info(header, offset, copier_size, mapping, len(data))
+            if info:
+                checksum, complement = struct.unpack_from("<HH", header, 0x1C)
+                score = int((checksum ^ complement) == 0xFFFF) * 2
+                score += int((len(data) % 0x8000 == 512) == bool(copier_size))
+                candidates.append((score, info))
+    return max(candidates, key=lambda item: item[0])[1] if candidates else None
 
 
 def inspect_file(filepath: str) -> Optional[Dict[str, Any]]:
@@ -218,7 +371,21 @@ def inspect_file(filepath: str) -> Optional[Dict[str, Any]]:
         # Prevents loading hundreds of megabytes into RAM on CD/ISO images
         data = f.read(131072)
 
-    detectors = [detect_gba, detect_n64, detect_ps1, detect_nes, detect_snes]
+    snes_info = None
+    if os.path.splitext(filepath)[1].lower() in (".sfc", ".smc"):
+        copier_size = 512 if file_size % 0x8000 == 512 else 0
+        offset = 0x40FFC0 + copier_size
+        if file_size >= offset + 64:
+            with open(filepath, "rb") as stream:
+                stream.seek(offset)
+                snes_info = _snes_header_info(stream.read(64), offset, copier_size, "ExHiROM", file_size)
+    detectors = [
+        detect_gba,
+        detect_n64,
+        lambda sample: find_ps1_executable(filepath, sample),
+        detect_nes,
+        lambda sample: snes_info or detect_snes(sample),
+    ]
     for detector in detectors:
         info = detector(data)
         if info:

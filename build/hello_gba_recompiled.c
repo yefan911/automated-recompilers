@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <string.h>
 #include <math.h>
 
 #ifdef _WIN32
@@ -34,8 +35,45 @@ typedef struct {
     uint8_t  pram[0x400];    /* 1KB Palette RAM (0x05000000) */
 } ArmCpuContext;
 
+static const uint8_t gba_rom[] = {
+0x2E,0x00,0x00,0xEA,0x24,0xFF,0xAE,0x51,0x69,0x9A,0xA2,0x21,0x3D,0x84,0x82,0x0A,0x84,0xE4,0x09,0xAD,0x11,0x24,0x8B,0x98,0xC0,0x81,0x7F,0x21,0xA3,0x52,0xBE,0x19,
+0x93,0x09,0xCE,0x22,0x41,0xE2,0xF8,0x14,0x85,0xB1,0xFE,0x45,0x8E,0x7E,0x5F,0x0D,0xFE,0xDF,0xCA,0x53,0x41,0x8F,0xE8,0x5C,0x9B,0xC4,0x65,0x40,0x00,0x84,0x4F,0x99,
+0xB0,0x18,0x9B,0x6C,0x87,0xFA,0x00,0x54,0x8F,0x06,0xEB,0x4C,0x64,0xA1,0xE0,0xA2,0x8F,0xCA,0x83,0x4D,0x4C,0x60,0x72,0xB4,0x22,0x3E,0xD4,0x08,0xCE,0x4A,0xC9,0xC6,
+0xDB,0x65,0x8D,0x21,0x94,0x04,0xB4,0x09,0x40,0x85,0x1D,0x82,0x45,0x14,0x50,0x01,0x45,0x6E,0x13,0xAC,0x2D,0xA5,0x1A,0xC6,0xCA,0x4E,0xA9,0xB6,0x47,0x0E,0xB4,0x54,
+0xB7,0x4A,0x7C,0x25,0xD7,0x43,0x5C,0x13,0x79,0x47,0x35,0xD3,0x16,0xA4,0x8A,0x42,0x73,0x2C,0xA3,0x25,0xB0,0x42,0x70,0xA7,0x26,0x43,0x5F,0x12,0x00,0x00,0x00,0x00,
+0x54,0x45,0x53,0x54,0x20,0x52,0x45,0x43,0x4F,0x4D,0x50,0x00,0x54,0x52,0x45,0x43,0x30,0x31,0x96,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x9C,0x00,0x00,
+0x04,0x04,0xA0,0xE3,0x20,0x10,0x9F,0xE5,0xB0,0x10,0xC0,0xE1,0x0B,0x00,0x00,0xEB,0xFE,0xFF,0xFF,0xEA,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x03,0x04,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+0x06,0x04,0xA0,0xE3,0x1C,0x10,0x9F,0xE5,0x1F,0x20,0xA0,0xE3,0xB0,0x20,0xC0,0xE1,0x02,0x00,0x80,0xE2,0x01,0x20,0x82,0xE2,0x01,0x10,0x51,0xE2,0xFA,0xFF,0xFF,0x1A,
+0x1E,0xFF,0x2F,0xE1,0x00,0x00,0x00,0x00,0x60,0x09,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+};
 /* Hardware Memory Bus Shims */
 static inline uint8_t mem_read8(ArmCpuContext* ctx, uint32_t addr) {
+    if (addr == 0x04000130 || addr == 0x04000131) return (uint8_t)(ctx->keyinput >> ((addr & 1) * 8));
+    if (addr == 0x04000000 || addr == 0x04000001) return (uint8_t)(ctx->dispcnt >> ((addr & 1) * 8));
+    if (addr >= 0x08000000 && addr < 0x0E000000) { uint32_t offset = (addr - 0x08000000) & 0x01FFFFFF; return offset < sizeof(gba_rom) ? gba_rom[offset] : 0; }
     if (addr >= 0x02000000 && addr < 0x02040000) return ctx->ewram[addr - 0x02000000];
     if (addr >= 0x03000000 && addr < 0x03008000) return ctx->iwram[addr - 0x03000000];
     if (addr >= 0x05000000 && addr < 0x05000400) return ctx->pram[addr - 0x05000000];
@@ -58,11 +96,8 @@ static inline uint16_t mem_read16(ArmCpuContext* ctx, uint32_t addr) {
     if (addr == 0x0400000A) return ctx->bg1cnt;
     if (addr == 0x0400000C) return ctx->bg2cnt;
     if (addr == 0x0400000E) return ctx->bg3cnt;
-    if (addr == 0x04000130) return ctx->keyinput ? ctx->keyinput : 0x03FF;
-    if (addr >= 0x02000000 && addr <= 0x02040000 - 2) return *(uint16_t*)&ctx->ewram[addr - 0x02000000];
-    if (addr >= 0x03000000 && addr <= 0x03008000 - 2) return *(uint16_t*)&ctx->iwram[addr - 0x03000000];
-    if (addr >= 0x05000000 && addr <= 0x05000400 - 2) return *(uint16_t*)&ctx->pram[addr - 0x05000000];
-    if (addr >= 0x06000000 && addr <= 0x06018000 - 2) return *(uint16_t*)&ctx->vram[addr - 0x06000000];
+    if (addr == 0x04000130) return ctx->keyinput;
+    if ((addr >= 0x02000000 && addr <= 0x02040000 - 2) || (addr >= 0x03000000 && addr <= 0x03008000 - 2) || (addr >= 0x05000000 && addr <= 0x05000400 - 2) || (addr >= 0x06000000 && addr <= 0x06018000 - 2) || (addr >= 0x08000000 && addr <= 0x0E000000 - 2)) return (uint16_t)(mem_read8(ctx, addr) | ((uint16_t)mem_read8(ctx, addr + 1) << 8));
     return 0;
 }
 
@@ -91,23 +126,19 @@ static inline void mem_write16(ArmCpuContext* ctx, uint32_t addr, uint16_t val) 
     } else if (addr == 0x04000026) {
         ctx->bg2_pd = (int16_t)val;
     } else if (addr >= 0x02000000 && addr <= 0x02040000 - 2) {
-        *(uint16_t*)&ctx->ewram[addr - 0x02000000] = val;
+        mem_write8(ctx, addr, (uint8_t)val); mem_write8(ctx, addr + 1, (uint8_t)(val >> 8));
     } else if (addr >= 0x03000000 && addr <= 0x03008000 - 2) {
-        *(uint16_t*)&ctx->iwram[addr - 0x03000000] = val;
+        mem_write8(ctx, addr, (uint8_t)val); mem_write8(ctx, addr + 1, (uint8_t)(val >> 8));
     } else if (addr >= 0x05000000 && addr <= 0x05000400 - 2) {
-        *(uint16_t*)&ctx->pram[addr - 0x05000000] = val;
+        mem_write8(ctx, addr, (uint8_t)val); mem_write8(ctx, addr + 1, (uint8_t)(val >> 8));
     } else if (addr >= 0x06000000 && addr <= 0x06018000 - 2) {
-        uint32_t offset = addr - 0x06000000;
-        *(uint16_t*)&ctx->vram[offset] = val;
+        mem_write8(ctx, addr, (uint8_t)val); mem_write8(ctx, addr + 1, (uint8_t)(val >> 8));
         ctx->pixels_written++;
     }
 }
 
 static inline uint32_t mem_read32(ArmCpuContext* ctx, uint32_t addr) {
-    if (addr >= 0x02000000 && addr <= 0x02040000 - 4) return *(uint32_t*)&ctx->ewram[addr - 0x02000000];
-    if (addr >= 0x03000000 && addr <= 0x03008000 - 4) return *(uint32_t*)&ctx->iwram[addr - 0x03000000];
-    if (addr >= 0x05000000 && addr <= 0x05000400 - 4) return *(uint32_t*)&ctx->pram[addr - 0x05000000];
-    if (addr >= 0x06000000 && addr <= 0x06018000 - 4) return *(uint32_t*)&ctx->vram[addr - 0x06000000];
+    if ((addr >= 0x02000000 && addr <= 0x02040000 - 4) || (addr >= 0x03000000 && addr <= 0x03008000 - 4) || (addr >= 0x05000000 && addr <= 0x05000400 - 4) || (addr >= 0x06000000 && addr <= 0x06018000 - 4) || (addr >= 0x08000000 && addr <= 0x0E000000 - 4)) return mem_read8(ctx, addr) | ((uint32_t)mem_read8(ctx, addr + 1) << 8) | ((uint32_t)mem_read8(ctx, addr + 2) << 16) | ((uint32_t)mem_read8(ctx, addr + 3) << 24);
     return 0;
 }
 
@@ -122,10 +153,9 @@ static inline void mem_write32(ArmCpuContext* ctx, uint32_t addr, uint32_t val) 
         ctx->sound_fifo_a[(ctx->fifo_a_count + 2) & 0x1F] = (int8_t)((val >> 16) & 0xFF);
         ctx->sound_fifo_a[(ctx->fifo_a_count + 3) & 0x1F] = (int8_t)((val >> 24) & 0xFF);
         ctx->fifo_a_count += 4;
-    } else if (addr >= 0x02000000 && addr <= 0x02040000 - 4) *(uint32_t*)&ctx->ewram[addr - 0x02000000] = val;
-    else if (addr >= 0x03000000 && addr <= 0x03008000 - 4) *(uint32_t*)&ctx->iwram[addr - 0x03000000] = val;
-    else if (addr >= 0x05000000 && addr <= 0x05000400 - 4) *(uint32_t*)&ctx->pram[addr - 0x05000000] = val;
-    else if (addr >= 0x06000000 && addr <= 0x06018000 - 4) *(uint32_t*)&ctx->vram[addr - 0x06000000] = val;
+    } else if ((addr >= 0x02000000 && addr <= 0x02040000 - 4) || (addr >= 0x03000000 && addr <= 0x03008000 - 4) || (addr >= 0x05000000 && addr <= 0x05000400 - 4) || (addr >= 0x06000000 && addr <= 0x06018000 - 4)) {
+        mem_write8(ctx, addr, (uint8_t)val); mem_write8(ctx, addr + 1, (uint8_t)(val >> 8)); mem_write8(ctx, addr + 2, (uint8_t)(val >> 16)); mem_write8(ctx, addr + 3, (uint8_t)(val >> 24));
+    }
 }
 
 /* GBA BIOS SWI Emulation Shims */
@@ -143,27 +173,29 @@ static inline void gba_bios_swi(ArmCpuContext* ctx, uint32_t swi_num) {
             break;
         case 0x06: /* Div: r0 / r1 */
             if (ctx->r[1] != 0) {
-                int32_t num = (int32_t)ctx->r[0];
-                int32_t den = (int32_t)ctx->r[1];
+                int64_t num = (int32_t)ctx->r[0];
+                int64_t den = (int32_t)ctx->r[1];
                 ctx->r[0] = (uint32_t)(num / den);
                 ctx->r[1] = (uint32_t)(num % den);
-                ctx->r[3] = (uint32_t)(abs(num / den));
+                int64_t quotient = num / den; ctx->r[3] = (uint32_t)(quotient < 0 ? -quotient : quotient);
             }
             break;
         case 0x07: /* DivARM: r1 / r0 */
             if (ctx->r[0] != 0) {
-                int32_t num = (int32_t)ctx->r[1];
-                int32_t den = (int32_t)ctx->r[0];
+                int64_t num = (int32_t)ctx->r[1];
+                int64_t den = (int32_t)ctx->r[0];
                 ctx->r[0] = (uint32_t)(num / den);
                 ctx->r[1] = (uint32_t)(num % den);
-                ctx->r[3] = (uint32_t)(abs(num / den));
+                int64_t quotient = num / den; ctx->r[3] = (uint32_t)(quotient < 0 ? -quotient : quotient);
             }
             break;
         case 0x08: /* Sqrt */
             {
                 uint32_t val = ctx->r[0];
                 uint32_t root = 0;
-                while ((root + 1) * (root + 1) <= val) root++;
+                uint32_t bit = 1u << 30;
+                while (bit > val) bit >>= 2;
+                while (bit) { if (val >= root + bit) { val -= root + bit; root = (root >> 1) + bit; } else root >>= 1; bit >>= 2; }
                 ctx->r[0] = root;
             }
             break;
@@ -217,14 +249,18 @@ static inline void gba_bios_swi(ArmCpuContext* ctx, uint32_t swi_num) {
                 uint8_t src_width = mem_read8(ctx, param + 2);
                 uint8_t dst_width = mem_read8(ctx, param + 3);
                 uint32_t base_offset = mem_read32(ctx, param + 4);
-                if (src_width > 0 && dst_width > 0) {
-                    for (uint16_t i = 0; i < len; i++) {
+                if ((src_width == 1 || src_width == 2 || src_width == 4 || src_width == 8) && (dst_width == 1 || dst_width == 2 || dst_width == 4 || dst_width == 8 || dst_width == 16 || dst_width == 32) && dst_width >= src_width) {
+                    uint32_t packed = 0, bits = 0, out = dst;
+                    uint32_t count = (uint32_t)len * 8 / src_width;
+                    for (uint32_t i = 0; i < count; i++) {
                         uint8_t b = mem_read8(ctx, src + (i * src_width / 8));
                         uint8_t val = (b >> ((i * src_width) % 8)) & ((1 << src_width) - 1);
-                        if (dst_width == 8) mem_write8(ctx, dst + i, (uint8_t)(val + base_offset));
-                        else if (dst_width == 16) mem_write16(ctx, dst + i * 2, (uint16_t)(val + base_offset));
-                        else if (dst_width == 32) mem_write32(ctx, dst + i * 4, val + base_offset);
+                        uint32_t value = val; if (val != 0 || (base_offset & 0x80000000u)) value += base_offset & 0x7FFFFFFFu;
+                        uint32_t mask = dst_width == 32 ? ~0u : ((1u << dst_width) - 1);
+                        packed |= (value & mask) << bits; bits += dst_width;
+                        if (bits == 32) { mem_write32(ctx, out, packed); out += 4; packed = 0; bits = 0; }
                     }
+                    if (bits) mem_write32(ctx, out, packed);
                 }
             }
             break;
@@ -234,6 +270,61 @@ static inline void gba_bios_swi(ArmCpuContext* ctx, uint32_t swi_num) {
 }
 
 /* Basic Block Prototypes */
+
+static inline void arm_set_nz(ArmCpuContext* ctx, uint32_t value) {
+    ctx->flag_z = value == 0;
+    ctx->cpsr = (ctx->cpsr & 0x3FFFFFFFu) | (value & 0x80000000u)
+              | (ctx->flag_z ? 0x40000000u : 0);
+}
+static inline uint32_t arm_add(ArmCpuContext* ctx, uint32_t a, uint32_t b,
+                              uint32_t carry, bool flags) {
+    uint64_t sum = (uint64_t)a + b + carry;
+    uint32_t result = (uint32_t)sum;
+    if (flags) {
+        ctx->cpsr = (ctx->cpsr & 0xCFFFFFFFu)
+                  | ((sum >> 32) ? 0x20000000u : 0)
+                  | ((~(a ^ b) & (a ^ result) & 0x80000000u) ? 0x10000000u : 0);
+        arm_set_nz(ctx, result);
+    }
+    return result;
+}
+static inline uint32_t arm_sub(ArmCpuContext* ctx, uint32_t a, uint32_t b,
+                              uint32_t carry, bool flags) {
+    return arm_add(ctx, a, ~b, carry, flags);
+}
+static inline uint32_t arm_shift(ArmCpuContext* ctx, uint32_t value,
+                                unsigned kind, unsigned count,
+                                bool reg_shift, bool flags) {
+    uint32_t carry = (ctx->cpsr >> 29) & 1;
+    uint32_t result = value;
+    if (!reg_shift && count == 0 && (kind == 1 || kind == 2)) count = 32;
+    if (!reg_shift && count == 0 && kind == 3) {
+        result = (value >> 1) | (carry << 31);
+        carry = value & 1;
+    } else if (count != 0) {
+        if (kind == 0) {
+            carry = count <= 32 ? ((value >> (32 - count)) & 1) : 0;
+            result = count < 32 ? value << count : 0;
+        } else if (kind == 1) {
+            carry = count <= 32 ? ((value >> (count - 1)) & 1) : 0;
+            result = count < 32 ? value >> count : 0;
+        } else if (kind == 2) {
+            carry = count < 32 ? ((value >> (count - 1)) & 1) : value >> 31;
+            result = count < 32 ? ((value >> count) | ((value & 0x80000000u)
+                     ? (~0u << (32 - count)) : 0)) : ((value & 0x80000000u) ? ~0u : 0);
+        } else {
+            unsigned shift = count & 31;
+            result = shift ? ((value >> shift) | (value << (32 - shift))) : value;
+            carry = result >> 31;
+        }
+    }
+    if (flags) {
+        ctx->cpsr = (ctx->cpsr & ~0x20000000u) | (carry << 29);
+        arm_set_nz(ctx, result);
+    }
+    return result;
+}
+
 uint32_t recomp_dispatch(ArmCpuContext* ctx, uint32_t target_vram);
 static inline void recomp_call(ArmCpuContext* ctx, uint32_t target_vram) {
     uint32_t ret_addr = ctx->r[14];
@@ -245,6 +336,7 @@ static inline void recomp_call(ArmCpuContext* ctx, uint32_t target_vram) {
 }
 uint32_t bb_08000000(ArmCpuContext* ctx);
 uint32_t bb_080000C0(ArmCpuContext* ctx);
+uint32_t bb_080000D0(ArmCpuContext* ctx);
 uint32_t bb_08000100(ArmCpuContext* ctx);
 uint32_t bb_0800010C(ArmCpuContext* ctx);
 uint32_t bb_08000120(ArmCpuContext* ctx);
@@ -253,17 +345,25 @@ uint32_t bb_08000120(ArmCpuContext* ctx);
 uint32_t bb_08000000(ArmCpuContext* ctx) {
     (void)ctx;
     return 0x080000C0; /* branch to 0x080000C0 */
+    return 0; /* bounded block fallback */
 }
 
-/* Basic Block 0x080000C0 - 0x080000D0 */
+/* Basic Block 0x080000C0 - 0x080000CC */
 uint32_t bb_080000C0(ArmCpuContext* ctx) {
     (void)ctx;
     ctx->r[0] = 0x04000000;
     ctx->r[1] = 0x00000403; /* loaded from 0x080000EC */
-    mem_write16(ctx, ctx->r[0], (uint16_t)ctx->r[1]);
-    ctx->r[14] = 0x080000D0;
-    recomp_call(ctx, 0x08000100);
+    { uint32_t base = ctx->r[0]; uint32_t adjusted = base + (0); uint32_t address = adjusted; mem_write16(ctx, address, (uint16_t)ctx->r[1]); }
+    if (true) { ctx->r[14] = 0x080000D0; return 0x08000100; }
+    return 0x080000D0;
+    return 0; /* bounded block fallback */
+}
+
+/* Basic Block 0x080000D0 - 0x080000D0 */
+uint32_t bb_080000D0(ArmCpuContext* ctx) {
+    (void)ctx;
     return 0x00000000; /* infinite loop halt */
+    return 0; /* bounded block fallback */
 }
 
 /* Basic Block 0x08000100 - 0x0800011C */
@@ -272,29 +372,32 @@ uint32_t bb_08000100(ArmCpuContext* ctx) {
     ctx->r[0] = 0x06000000;
     ctx->r[1] = 0x00000960; /* loaded from 0x08000128 */
     ctx->r[2] = 0x0000001F;
-    mem_write16(ctx, ctx->r[0], (uint16_t)ctx->r[2]);
+    { uint32_t base = ctx->r[0]; uint32_t adjusted = base + (0); uint32_t address = adjusted; mem_write16(ctx, address, (uint16_t)ctx->r[2]); }
     ctx->r[0] = ctx->r[0] + 0x00000002;
     ctx->r[2] = ctx->r[2] + 0x00000001;
-    ctx->r[1] = ctx->r[1] - 0x00000001; ctx->flag_z = (ctx->r[1] == 0);
+    ctx->r[1] = arm_sub(ctx, ctx->r[1], 0x00000001, 1, true);
     if (!ctx->flag_z) return 0x0800010C;
     else return 0x08000120;
+    return 0; /* bounded block fallback */
 }
 
 /* Basic Block 0x0800010C - 0x0800011C */
 uint32_t bb_0800010C(ArmCpuContext* ctx) {
     (void)ctx;
-    mem_write16(ctx, ctx->r[0], (uint16_t)ctx->r[2]);
+    { uint32_t base = ctx->r[0]; uint32_t adjusted = base + (0); uint32_t address = adjusted; mem_write16(ctx, address, (uint16_t)ctx->r[2]); }
     ctx->r[0] = ctx->r[0] + 0x00000002;
     ctx->r[2] = ctx->r[2] + 0x00000001;
-    ctx->r[1] = ctx->r[1] - 0x00000001; ctx->flag_z = (ctx->r[1] == 0);
+    ctx->r[1] = arm_sub(ctx, ctx->r[1], 0x00000001, 1, true);
     if (!ctx->flag_z) return 0x0800010C;
     else return 0x08000120;
+    return 0; /* bounded block fallback */
 }
 
 /* Basic Block 0x08000120 - 0x08000120 */
 uint32_t bb_08000120(ArmCpuContext* ctx) {
     (void)ctx;
     return ctx->r[14]; /* bx r14 */
+    return 0; /* bounded block fallback */
 }
 
 /* Global Dispatch Trampoline */
@@ -303,6 +406,7 @@ uint32_t recomp_dispatch(ArmCpuContext* ctx, uint32_t target_vram) {
     switch (clean_target) {
         case 0x08000000: return bb_08000000(ctx);
         case 0x080000C0: return bb_080000C0(ctx);
+        case 0x080000D0: return bb_080000D0(ctx);
         case 0x08000100: return bb_08000100(ctx);
         case 0x0800010C: return bb_0800010C(ctx);
         case 0x08000120: return bb_08000120(ctx);
@@ -312,8 +416,7 @@ uint32_t recomp_dispatch(ArmCpuContext* ctx, uint32_t target_vram) {
     }
 }
 
-#ifdef _WIN32
-/* Win32 Presentation Window (Scales GBA 240x160 3x to 720x480) */
+/* Framebuffer conversion shared by snapshots and window presentation. */
 static uint32_t screen_buffer[240 * 160];
 
 void update_screen_from_vram(ArmCpuContext* ctx) {
@@ -365,21 +468,24 @@ void update_screen_from_vram(ArmCpuContext* ctx) {
                     int px = (x + hofs) & 0xFF;
                     int tx = px / 8;
                     int fine_x = px % 8;
-                    uint16_t tile_entry = *(uint16_t*)&ctx->vram[sbb + (ty * 32 + tx) * 2];
+                    uint32_t map_addr = (sbb + (ty * 32 + tx) * 2) % (sizeof(ctx->vram) - 1);
+                    uint16_t tile_entry = *(uint16_t*)&ctx->vram[map_addr];
                     uint16_t tile_id = tile_entry & 0x3FF;
                     uint8_t pal_idx = (tile_entry >> 12) & 0xF;
                     
                     if (is_8bpp) {
-                        uint8_t color_idx = ctx->vram[cbb + tile_id * 64 + fine_y * 8 + fine_x];
+                        uint32_t tile_off = (cbb + tile_id * 64 + fine_y * 8 + fine_x) % sizeof(ctx->vram);
+                        uint8_t color_idx = ctx->vram[tile_off];
                         if (color_idx != 0) {
                             uint16_t c = pal[color_idx];
                             screen_buffer[y * 240 + x] = (((c & 0x1F) << 3) << 16) | ((((c >> 5) & 0x1F) << 3) << 8) | (((c >> 10) & 0x1F) << 3);
                         }
                     } else {
-                        uint8_t byte_val = ctx->vram[cbb + tile_id * 32 + fine_y * 4 + (fine_x / 2)];
+                        uint32_t tile_off = (cbb + tile_id * 32 + fine_y * 4 + (fine_x / 2)) % sizeof(ctx->vram);
+                        uint8_t byte_val = ctx->vram[tile_off];
                         uint8_t color_idx = (fine_x % 2 == 0) ? (byte_val & 0xF) : ((byte_val >> 4) & 0xF);
                         if (color_idx != 0) {
-                            uint16_t c = pal[pal_idx * 16 + color_idx];
+                            uint16_t c = pal[(pal_idx * 16 + color_idx) & 0xFF];
                             screen_buffer[y * 240 + x] = (((c & 0x1F) << 3) << 16) | ((((c >> 5) & 0x1F) << 3) << 8) | (((c >> 10) & 0x1F) << 3);
                         }
                     }
@@ -389,6 +495,22 @@ void update_screen_from_vram(ArmCpuContext* ctx) {
     }
 }
 
+static int dump_framebuffer(ArmCpuContext* ctx, const char* path) {
+    update_screen_from_vram(ctx);
+    FILE* output = fopen(path, "wb");
+    if (!output) { perror("Framebuffer output"); return 1; }
+    bool ok = fprintf(output, "P6\n240 160\n255\n") > 0;
+    for (int i = 0; ok && i < 240 * 160; i++) {
+        uint32_t pixel = screen_buffer[i];
+        uint8_t rgb[3] = {(uint8_t)(pixel >> 16), (uint8_t)(pixel >> 8), (uint8_t)pixel};
+        ok = fwrite(rgb, 1, 3, output) == 3;
+    }
+    if (fclose(output) != 0) ok = false;
+    if (!ok) { fprintf(stderr, "Could not write framebuffer\n"); return 1; }
+    return 0;
+}
+
+#ifdef _WIN32
 static volatile bool g_running = true;
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
@@ -484,35 +606,46 @@ void run_presentation_window(ArmCpuContext* ctx, uint32_t start_pc) {
 /* Main Entry / Native Recompiled Executable */
 static ArmCpuContext s_ctx;
 int main(int argc, char** argv) {
-    (void)argc;
-    (void)argv;
+    const char* framebuffer_path = NULL;
+    bool window = false;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--framebuffer") == 0 && i + 1 < argc) framebuffer_path = argv[++i];
+        else if (strcmp(argv[i], "--window") == 0) window = true;
+        else if (strcmp(argv[i], "--headless") == 0) window = false;
+        else if (strcmp(argv[i], "--no-hold") == 0) { /* bounded mode */ }
+        else { fprintf(stderr, "Unknown or incomplete option: %s\n", argv[i]); return 2; }
+    }
     printf("=== Starting Automated Recompiled Game ===\n");
     ArmCpuContext* ctx = &s_ctx;
+    ctx->keyinput = 0x03FF;
+    ctx->r[13] = 0x03007F00;
     
     uint32_t next_pc = 0x08000000;
     int max_cycles = 100000;
 #if defined(_MSC_VER) && defined(_WIN32)
     __try {
+#endif
+#ifdef _WIN32
+        if (window) {
+            run_presentation_window(ctx, next_pc);
+        } else
+#else
+        (void)window;
+#endif
         while (max_cycles-- > 0 && next_pc != 0) {
             next_pc = recomp_dispatch(ctx, next_pc);
         }
+#if defined(_MSC_VER) && defined(_WIN32)
     } __except(1) {
         printf("[Crash Guard] Caught hardware exception during GBA execution (code: 0x%08lX)\n", GetExceptionCode());
-    }
-#else
-    while (max_cycles-- > 0 && next_pc != 0) {
-        next_pc = recomp_dispatch(ctx, next_pc);
+        return 1;
     }
 #endif
     
     printf("=== Recompiled execution finished successfully ===\n");
     printf("  * REG_DISPCNT  : 0x%04X (Mode %d)\n", ctx->dispcnt, ctx->dispcnt & 7);
     printf("  * Pixels Drawn : %u pixels written to VRAM\n", ctx->pixels_written);
+    if (framebuffer_path && dump_framebuffer(ctx, framebuffer_path) != 0) return 1;
     
-#ifdef _WIN32
-    if (argc > 1 && strcmp(argv[1], "--window") == 0) {
-        run_presentation_window(ctx, 0x08000000);
-    }
-#endif
     return 0;
 }

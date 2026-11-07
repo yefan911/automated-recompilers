@@ -11,6 +11,8 @@
 
 An automated static/hybrid recompilation framework that ingests video game console ROMs and translates them into standalone native PC applications (`.exe` / Linux binary) with a built-in Hardware Abstraction Layer (HAL).
 
+The current implementation is a prototype with partial CPU and hardware coverage. It supports ROM inspection, generated C, native homebrew execution, and GBA framebuffer snapshots. Commercial game playability, full graphics, audio output, and automatic runtime mod integration remain on the [roadmap](ROADMAP.md).
+
 [**Quick Start**](#quick-start-in-60-seconds) • 
 [**Showcase & CFG**](docs/SHOWCASE.md) • 
 [**Opcode Coverage**](docs/OPCODE_COVERAGE.md) • 
@@ -32,9 +34,9 @@ Traditional emulators execute guest console code at runtime using an interpreter
 | Feature | Interpreter / Traditional Emulator | Dynamic JIT Emulator | Automated Static Recompiler (AOT) |
 | :--- | :--- | :--- | :--- |
 | **Execution Model** | Runtime fetch-decode loop | Runtime JIT cache compilation | **Ahead-Of-Time (AOT) compilation to C** |
-| **CPU Overhead** | High (50×–100× slowdown) | Medium (JIT compile overhead) | **Zero emulation overhead (native binary)** |
-| **Micro-Stutter** | Low | High (compilation hitching) | **None (all code compiled at build time)** |
-| **Frame Rates** | Locked to original console | Often hardcoded / complex hack | **Naturally unlocked high refresh rates** |
+| **CPU Overhead** | Instruction interpretation | Compiled blocks and JIT work | **Compiled blocks, dispatch, and hardware shims** |
+| **Code Compilation** | No guest compilation | Runtime compilation | **Build-time compilation** |
+| **Frame Rates** | Guest timing and host display | Guest timing and host display | **Guest timing and host presentation** |
 | **Portability** | Requires emulator install | Requires JIT support (`W^X` restrictions) | **Standalone single-file `.exe`** |
 | **Modding Potential** | ROM patching / memory hacking | Memory patching | **Native C source modification & hook API** |
 
@@ -52,7 +54,7 @@ Traditional emulators execute guest console code at runtime using an interpreter
   ┌───────────────────────────────────────────────────────────┐
   │  Stage 1: Identification (src/core/rom_detector.py)       │
   │  • Normalizes endianness (Big/Little/Byte-swapped)        │
-  │  • Verifies logo & ROM checksums                          │
+  │  • Reads identification fields & ROM checksums           │
   │  • Resolves entry vectors & banked layout (LoROM/HiROM)   │
   └─────────────────────────────┬─────────────────────────────┘
                                 │
@@ -113,6 +115,14 @@ python recompile.py roms/test/hello_gba.gba
 .\build\hello_gba.exe --window
 ```
 
+For a bounded run and a framebuffer image:
+
+```bash
+.\build\hello_gba.exe --headless --framebuffer build\hello_gba.ppm
+```
+
+The bundled homebrew initializes GBA Mode 3 and writes 2,400 pixels. The PPM snapshot contains the framebuffer produced by that execution.
+
 ---
 
 ## Standalone Executable (`recompiler.exe`)
@@ -133,6 +143,8 @@ python package_exe.py
 ## Interactive Graphical User Interface (GUI)
 
 The framework includes a dark-themed desktop GUI for visual ROM selection, metadata inspection, Shannon entropy analysis, and one-click recompilation:
+
+The viewport offers **ROM Data** preview, **Native Snapshot** for a compiled GBA ROM, and **Native Window** to launch a compiled guest. Native Snapshot captures the framebuffer after execution completes.
 
 ```bash
 # Launch via CLI option

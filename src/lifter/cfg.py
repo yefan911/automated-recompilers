@@ -52,6 +52,7 @@ class BasicBlock:
             code = op.get("c_code", "")
             if code:
                 lines.append(f"    {code}")
+        lines.append("    return 0; /* bounded block fallback */")
         lines.append("}\n")
         return "\n".join(lines)
 

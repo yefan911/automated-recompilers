@@ -10,9 +10,38 @@ high-resolution texture pack parsing, and native C runtime interception shims.
 import os
 import json
 import zlib
+import math
+import re
+from pathlib import Path
 from enum import Enum
 from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional, Tuple, Any
+
+
+def _uint32(value: int, label: str):
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 0xFFFFFFFF:
+        raise ValueError(f"{label} must be an unsigned 32-bit integer")
+
+
+def _dimensions(width: int, height: int, *, allow_zero: bool = False):
+    for value, label in ((width, "Texture width"), (height, "Texture height")):
+        _uint32(value, label)
+        if not allow_zero and value == 0:
+            raise ValueError(f"{label} must be positive")
+
+
+def _crc32_value(value) -> int:
+    if isinstance(value, str):
+        value = int(value, 16 if value.lower().startswith("0x") or re.search(r"[a-fA-F]", value) else 10)
+    _uint32(value, "Texture CRC32")
+    return value
+
+
+def _c_string(value: str) -> str:
+    # Fixed-width octal escapes preserve UTF-8 bytes and cannot swallow a
+    # following digit, quote, backslash, or line break in the C source.
+    escaped = "".join(chr(b) if 32 <= b < 127 and b not in (34, 92) else f"\\{b:03o}" for b in value.encode("utf-8"))
+    return '"' + escaped + '"'
 
 
 class TextureFormat(str, Enum):
@@ -26,14 +55,15 @@ class TextureFormat(str, Enum):
 
 def compute_texture_crc32(data: bytes, width: int, height: int, fmt: TextureFormat = TextureFormat.RGBA8888) -> int:
     """
-    Computes a deterministic, collision-resistant CRC32 hash for a texture
+    Computes a deterministic CRC32 fingerprint for a texture
     based on its pixel payload, dimensions, and color format.
     """
     # Header salt incorporates dimensions and format to prevent collision between identical sub-blocks
+    _dimensions(width, height)
+    fmt = TextureFormat(fmt)
     header_salt = f"TEX:{width}x{height}:{fmt.value}:".encode("ascii")
-    combined = header_salt + data
     # Unsigned 32-bit CRC32
-    return zlib.crc32(combined) & 0xFFFFFFFF
+    return zlib.crc32(data, zlib.crc32(header_salt)) & 0xFFFFFFFF
 
 
 @dataclass
@@ -47,6 +77,24 @@ class TextureMetadata:
     file_path: Optional[str] = None
     name: Optional[str] = None
 
+    def __post_init__(self):
+        self.validate()
+
+    def validate(self):
+        _uint32(self.crc32, "Texture CRC32")
+        _dimensions(self.width, self.height, allow_zero=True)
+        self.format = TextureFormat(self.format)
+        if isinstance(self.data_size, bool) or not isinstance(self.data_size, int) or self.data_size < 0:
+            raise ValueError("Texture data size must be a nonnegative integer")
+        if isinstance(self.scale_factor, bool) or not isinstance(self.scale_factor, (int, float)) or not 1.4012985e-45 <= self.scale_factor <= 3.4028234e38 or not math.isfinite(self.scale_factor):
+            raise ValueError("Texture scale must be positive, finite, and representable as a C float")
+        if self.file_path is not None:
+            if not isinstance(self.file_path, (str, os.PathLike)):
+                raise ValueError("Texture file path must be a string or path")
+            self.file_path = os.fspath(self.file_path)
+            if not isinstance(self.file_path, str) or "\0" in self.file_path:
+                raise ValueError("Texture file path must be a string without NUL bytes")
+
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
         d["format"] = self.format.value
@@ -55,12 +103,10 @@ class TextureMetadata:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TextureMetadata":
-        crc32_val = data.get("crc32")
-        if isinstance(crc32_val, str) and crc32_val.startswith("0x"):
-            crc32_val = int(crc32_val, 16)
+        crc32_val = _crc32_value(data.get("crc32", 0))
         fmt = TextureFormat(data.get("format", TextureFormat.RGBA8888.value))
         return cls(
-            crc32=int(crc32_val or 0),
+            crc32=crc32_val,
             width=int(data.get("width", 0)),
             height=int(data.get("height", 0)),
             format=fmt,
@@ -137,8 +183,13 @@ class TextureManager:
         Registers an HD replacement texture for an existing original texture CRC32.
         Calculates scale factor relative to the original dimensions.
         """
-        scale_x = width / max(1, orig_width)
-        scale_y = height / max(1, orig_height)
+        _uint32(crc32, "Texture CRC32")
+        _dimensions(width, height)
+        _dimensions(orig_width, orig_height)
+        if not os.path.isfile(file_path):
+            raise ValueError(f"Replacement texture file not found: {file_path}")
+        scale_x = width / orig_width
+        scale_y = height / orig_height
         scale = max(scale_x, scale_y)
 
         meta = TextureMetadata(
@@ -160,64 +211,62 @@ class TextureManager:
         Scans for manifest `texture_pack.json` or standalone `<CRC32>.png` files.
         Returns the number of replacement textures loaded.
         """
-        if not os.path.exists(pack_dir):
+        root = Path(pack_dir).resolve()
+        if not root.exists():
             return 0
+        if not root.is_dir():
+            raise ValueError("Texture pack must be a directory")
+        entries = {}
+        manifest_path = root / "texture_pack.json"
 
-        loaded_count = 0
-        manifest_path = os.path.join(pack_dir, "texture_pack.json")
+        def texture_path(relative_path):
+            if not isinstance(relative_path, str) or Path(relative_path).is_absolute():
+                raise ValueError("Texture manifest paths must be relative to the pack directory")
+            path = (root / relative_path).resolve()
+            if not path.is_relative_to(root):
+                raise ValueError("Texture path leaves the pack directory")
+            if not path.is_file():
+                raise ValueError(f"Texture file not found: {relative_path}")
+            return str(path)
 
-        if os.path.isfile(manifest_path):
+        if manifest_path.is_file():
             try:
-                with open(manifest_path, "r", encoding="utf-8") as f:
+                with manifest_path.open("r", encoding="utf-8") as f:
                     manifest = json.load(f)
-                textures = manifest.get("textures", [])
-                for item in textures:
-                    crc_str = item.get("crc32")
-                    if isinstance(crc_str, str):
-                        crc = int(crc_str, 16) if crc_str.startswith("0x") else int(crc_str)
-                    else:
-                        crc = int(crc_str or 0)
-                    rel_path = item.get("file", f"tex_{crc:08X}.png")
-                    full_path = os.path.join(pack_dir, rel_path)
-                    meta = TextureMetadata(
-                        crc32=crc,
-                        width=int(item.get("width", 0)),
-                        height=int(item.get("height", 0)),
-                        format=TextureFormat(item.get("format", TextureFormat.RGBA8888.value)),
-                        data_size=int(item.get("size", 0)),
-                        scale_factor=float(item.get("scale", 1.0)),
-                        file_path=full_path,
-                        name=item.get("name", os.path.basename(rel_path))
-                    )
-                    self.replacements[crc] = meta
-                    loaded_count += 1
-            except Exception:
-                pass
+            except (OSError, ValueError) as error:
+                raise ValueError(f"Invalid texture pack manifest: {error}") from error
+            if not isinstance(manifest, dict) or not isinstance(manifest.get("textures", []), list):
+                raise ValueError("Texture manifest must contain a textures list")
+            for item in manifest.get("textures", []):
+                if not isinstance(item, dict) or "crc32" not in item:
+                    raise ValueError("Each texture entry must contain a CRC32")
+                crc = _crc32_value(item["crc32"])
+                full_path = texture_path(item.get("file", f"tex_{crc:08X}.png"))
+                meta = TextureMetadata(
+                    crc32=crc,
+                    width=item.get("width", 0),
+                    height=item.get("height", 0),
+                    format=TextureFormat(item.get("format", TextureFormat.RGBA8888.value)),
+                    data_size=os.path.getsize(full_path),
+                    scale_factor=item.get("scale", 1.0),
+                    file_path=full_path,
+                    name=item.get("name", os.path.basename(full_path))
+                )
+                entries[crc] = meta
 
         # Also discover loose files matching tex_<CRC32>.(png|bin|dds)
-        for fname in os.listdir(pack_dir):
-            if fname.startswith("tex_") and ("." in fname):
-                parts = fname.split(".")
-                crc_part = parts[0].replace("tex_", "")
-                try:
-                    crc = int(crc_part, 16)
-                    if crc not in self.replacements:
-                        full_path = os.path.join(pack_dir, fname)
-                        self.replacements[crc] = TextureMetadata(
-                            crc32=crc,
-                            width=0,
-                            height=0,
-                            format=TextureFormat.RGBA8888,
-                            data_size=os.path.getsize(full_path),
-                            scale_factor=1.0,
-                            file_path=full_path,
-                            name=fname
-                        )
-                        loaded_count += 1
-                except ValueError:
-                    continue
-
-        return loaded_count
+        for file in sorted(root.iterdir(), key=lambda path: (path.suffix.lower() != ".png", path.name.lower())):
+            match = re.fullmatch(r"tex_([0-9a-fA-F]{8})(?:_hd)?\.(png|bin|dds)", file.name, re.IGNORECASE)
+            if match and file.is_file():
+                crc = int(match[1], 16)
+                if crc not in entries:
+                    full_path = texture_path(file.name)
+                    entries[crc] = TextureMetadata(
+                        crc32=crc, width=0, height=0, format=TextureFormat.RGBA8888,
+                        data_size=os.path.getsize(full_path), file_path=full_path, name=file.name
+                    )
+        self.replacements.update(entries)
+        return len(entries)
 
     def get_replacement(self, crc32: int) -> Optional[TextureMetadata]:
         return self.replacements.get(crc32)
@@ -248,10 +297,13 @@ class TextureManager:
             "static const RecompHdTextureEntry g_recomp_hd_textures[] = {",
         ]
 
-        for crc, meta in self.replacements.items():
+        for crc, meta in sorted(self.replacements.items()):
+            meta.validate()
+            if crc != meta.crc32:
+                raise ValueError("Texture CRC32 no longer matches its registration")
             path_str = meta.file_path.replace("\\", "/") if meta.file_path else ""
             lines.append(
-                f'    {{ 0x{crc:08X}, {meta.width}, {meta.height}, {meta.scale_factor:.2f}f, "{path_str}" }},'
+                f'    {{ 0x{crc:08X}, {meta.width}, {meta.height}, {meta.scale_factor:.9e}f, {_c_string(path_str)} }},'
             )
 
         lines.extend([

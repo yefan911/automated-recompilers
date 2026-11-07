@@ -7,6 +7,7 @@ control flow edges for the CFG engine.
 
 import struct
 from typing import List, Dict, Any, Tuple
+from src.lifter.arm_codegen import condition_expr
 
 
 class ThumbLifter:
@@ -135,8 +136,11 @@ class ThumbLifter:
                     ir_ops.append({
                         "pc": instr_pc,
                         "op": "CMP_HI",
-                        "c_code": f"ctx->flag_z = (ctx->r[{rd}] == ctx->r[{rs}]);"
+                        "c_code": f"(void)arm_sub(ctx, ctx->r[{rd}], ctx->r[{rs}], 1, true);"
                     })
+                if sub_op in (0, 2) and rd == 15:
+                    ir_ops[-1]["c_code"] += " return ctx->r[15] & ~1u;"
+                    break
 
             # 4. Long Branch with Link (BL): 0xF000 prefix + 0xF800 suffix
             elif (raw & 0xF800) == 0xF000:
@@ -157,8 +161,10 @@ class ThumbLifter:
                             "pc": instr_pc,
                             "op": "BL_THUMB",
                             "target": target_vram,
-                            "c_code": f"ctx->r[14] = 0x{instr_pc + 4:08X} | 1; /* Thumb LR */\n    recomp_call(ctx, 0x{target_vram:08X});"
+                            "c_code": f"ctx->r[14] = 0x{instr_pc + 4:08X} | 1; /* Thumb LR */\n    return 0x{target_vram:08X};"
                         })
+                        targets.append(pc)
+                        break
 
             # 5. Unconditional Branch (Format 18: 0xE000)
             elif (raw & 0xF800) == 0xE000:
@@ -204,7 +210,7 @@ class ThumbLifter:
                     targets.append(target_vram)
                     targets.append(fallthrough)
 
-                    cond_expr = "!ctx->flag_z" if cond == 0x1 else ("ctx->flag_z" if cond == 0x0 else "ctx->flag_z")
+                    cond_expr = condition_expr(cond)
                     ir_ops.append({
                         "pc": instr_pc,
                         "op": "B_COND",
@@ -236,25 +242,25 @@ class ThumbLifter:
                     ir_ops.append({
                         "pc": instr_pc,
                         "op": "MOV_IMM",
-                        "c_code": f"ctx->r[{rd}] = 0x{imm8:08X}; ctx->flag_z = ({imm8} == 0);"
+                        "c_code": f"ctx->r[{rd}] = 0x{imm8:08X}; arm_set_nz(ctx, ctx->r[{rd}]);"
                     })
                 elif sub_op == 1: # CMP Rd, #imm8
                     ir_ops.append({
                         "pc": instr_pc,
                         "op": "CMP_IMM",
-                        "c_code": f"ctx->flag_z = (ctx->r[{rd}] == 0x{imm8:08X});"
+                        "c_code": f"(void)arm_sub(ctx, ctx->r[{rd}], 0x{imm8:08X}, 1, true);"
                     })
                 elif sub_op == 2: # ADD Rd, #imm8
                     ir_ops.append({
                         "pc": instr_pc,
                         "op": "ADD_IMM",
-                        "c_code": f"ctx->r[{rd}] += 0x{imm8:08X}; ctx->flag_z = (ctx->r[{rd}] == 0);"
+                        "c_code": f"{{ uint32_t before = ctx->r[{rd}]; ctx->r[{rd}] += 0x{imm8:08X}; (void)arm_add(ctx, before, 0x{imm8:08X}, 0, true); }}"
                     })
                 elif sub_op == 3: # SUB Rd, #imm8
                     ir_ops.append({
                         "pc": instr_pc,
                         "op": "SUB_IMM",
-                        "c_code": f"ctx->r[{rd}] -= 0x{imm8:08X}; ctx->flag_z = (ctx->r[{rd}] == 0);"
+                        "c_code": f"{{ uint32_t before = ctx->r[{rd}]; ctx->r[{rd}] -= 0x{imm8:08X}; (void)arm_sub(ctx, before, 0x{imm8:08X}, 1, true); }}"
                     })
 
             # 9. Load / Store with immediate offset: LDR / STR / LDRB / STRB (Format 9: 0x6000 - 0x7FFF)
@@ -312,7 +318,7 @@ class ThumbLifter:
                 ir_ops.append({
                     "pc": instr_pc,
                     "op": "SUB_REG" if is_sub else "ADD_REG",
-                    "c_code": f"ctx->r[{rd}] = ctx->r[{rn}] {sign} {op2}; ctx->flag_z = (ctx->r[{rd}] == 0);"
+                    "c_code": f"ctx->r[{rd}] = {'arm_sub' if is_sub else 'arm_add'}(ctx, ctx->r[{rn}], {op2}, {1 if is_sub else 0}, true);"
                 })
 
             # 12. Move Shifted Register: LSL / LSR / ASR immediate (Format 1: 0x0000 - 0x17FF)
@@ -322,27 +328,21 @@ class ThumbLifter:
                 rs = (raw >> 3) & 0x7
                 rd = raw & 0x7
                 if sub_op == 0:  # LSL
-                    c = f"ctx->r[{rd}] = ctx->r[{rs}] << {offset5};" if offset5 else f"ctx->r[{rd}] = ctx->r[{rs}];"
+                    c = f"ctx->r[{rd}] = arm_shift(ctx, ctx->r[{rs}], 0, {offset5}, false, true);"
                     ir_ops.append({
                         "pc": instr_pc,
                         "op": "LSL_IMM",
-                        "c_code": f"{c} ctx->flag_z = (ctx->r[{rd}] == 0);"
+                        "c_code": c
                     })
                 elif sub_op == 1:  # LSR
-                    if offset5 == 0:
-                        c_code = f"ctx->r[{rd}] = 0; ctx->flag_z = true;"
-                    else:
-                        c_code = f"ctx->r[{rd}] = ctx->r[{rs}] >> {offset5}; ctx->flag_z = (ctx->r[{rd}] == 0);"
+                    c_code = f"ctx->r[{rd}] = arm_shift(ctx, ctx->r[{rs}], 1, {offset5}, false, true);"
                     ir_ops.append({
                         "pc": instr_pc,
                         "op": "LSR_IMM",
                         "c_code": c_code
                     })
                 elif sub_op == 2:  # ASR
-                    if offset5 == 0:
-                        c_code = f"ctx->r[{rd}] = ((int32_t)ctx->r[{rs}] < 0) ? 0xFFFFFFFF : 0; ctx->flag_z = (ctx->r[{rd}] == 0);"
-                    else:
-                        c_code = f"ctx->r[{rd}] = (uint32_t)((int32_t)ctx->r[{rs}] >> {offset5}); ctx->flag_z = (ctx->r[{rd}] == 0);"
+                    c_code = f"ctx->r[{rd}] = arm_shift(ctx, ctx->r[{rs}], 2, {offset5}, false, true);"
                     ir_ops.append({
                         "pc": instr_pc,
                         "op": "ASR_IMM",
@@ -357,22 +357,26 @@ class ThumbLifter:
                 alu_handlers = {
                     0:  ("AND_REG", f"ctx->r[{rd}] &= ctx->r[{rs}]; ctx->flag_z = (ctx->r[{rd}] == 0);"),
                     1:  ("EOR_REG", f"ctx->r[{rd}] ^= ctx->r[{rs}]; ctx->flag_z = (ctx->r[{rd}] == 0);"),
-                    2:  ("LSL_REG", f"ctx->r[{rd}] <<= (ctx->r[{rs}] & 0xFF); ctx->flag_z = (ctx->r[{rd}] == 0);"),
-                    3:  ("LSR_REG", f"ctx->r[{rd}] >>= (ctx->r[{rs}] & 0xFF); ctx->flag_z = (ctx->r[{rd}] == 0);"),
-                    4:  ("ASR_REG", f"ctx->r[{rd}] = (uint32_t)((int32_t)ctx->r[{rd}] >> (ctx->r[{rs}] & 0xFF)); ctx->flag_z = (ctx->r[{rd}] == 0);"),
-                    5:  ("ADC_REG", f"ctx->r[{rd}] += ctx->r[{rs}]; ctx->flag_z = (ctx->r[{rd}] == 0);"),
-                    6:  ("SBC_REG", f"ctx->r[{rd}] -= ctx->r[{rs}]; ctx->flag_z = (ctx->r[{rd}] == 0);"),
-                    7:  ("ROR_REG", f"{{ uint32_t s = ctx->r[{rs}] & 0x1F; if (s) ctx->r[{rd}] = (ctx->r[{rd}] >> s) | (ctx->r[{rd}] << (32 - s)); ctx->flag_z = (ctx->r[{rd}] == 0); }}"),
+                    2:  ("LSL_REG", f"ctx->r[{rd}] = arm_shift(ctx, ctx->r[{rd}], 0, ctx->r[{rs}] & 0xFF, true, true);"),
+                    3:  ("LSR_REG", f"ctx->r[{rd}] = arm_shift(ctx, ctx->r[{rd}], 1, ctx->r[{rs}] & 0xFF, true, true);"),
+                    4:  ("ASR_REG", f"ctx->r[{rd}] = arm_shift(ctx, ctx->r[{rd}], 2, ctx->r[{rs}] & 0xFF, true, true);"),
+                    5:  ("ADC_REG", f"ctx->r[{rd}] = arm_add(ctx, ctx->r[{rd}], ctx->r[{rs}], (ctx->cpsr >> 29) & 1, true);"),
+                    6:  ("SBC_REG", f"ctx->r[{rd}] = arm_sub(ctx, ctx->r[{rd}], ctx->r[{rs}], (ctx->cpsr >> 29) & 1, true);"),
+                    7:  ("ROR_REG", f"ctx->r[{rd}] = arm_shift(ctx, ctx->r[{rd}], 3, ctx->r[{rs}] & 0xFF, true, true);"),
                     8:  ("TST_REG", f"ctx->flag_z = ((ctx->r[{rd}] & ctx->r[{rs}]) == 0);"),
-                    9:  ("NEG_REG", f"ctx->r[{rd}] = (uint32_t)(-(int32_t)ctx->r[{rs}]); ctx->flag_z = (ctx->r[{rd}] == 0);"),
-                    10: ("CMP_REG", f"ctx->flag_z = (ctx->r[{rd}] == ctx->r[{rs}]);"),
-                    11: ("CMN_REG", f"ctx->flag_z = ((ctx->r[{rd}] + ctx->r[{rs}]) == 0);"),
+                    9:  ("NEG_REG", f"ctx->r[{rd}] = arm_sub(ctx, 0, ctx->r[{rs}], 1, true);"),
+                    10: ("CMP_REG", f"(void)arm_sub(ctx, ctx->r[{rd}], ctx->r[{rs}], 1, true);"),
+                    11: ("CMN_REG", f"(void)arm_add(ctx, ctx->r[{rd}], ctx->r[{rs}], 0, true);"),
                     12: ("ORR_REG", f"ctx->r[{rd}] |= ctx->r[{rs}]; ctx->flag_z = (ctx->r[{rd}] == 0);"),
                     13: ("MUL_REG", f"ctx->r[{rd}] *= ctx->r[{rs}]; ctx->flag_z = (ctx->r[{rd}] == 0);"),
                     14: ("BIC_REG", f"ctx->r[{rd}] &= ~ctx->r[{rs}]; ctx->flag_z = (ctx->r[{rd}] == 0);"),
                     15: ("MVN_REG", f"ctx->r[{rd}] = ~ctx->r[{rs}]; ctx->flag_z = (ctx->r[{rd}] == 0);"),
                 }
                 op_name, op_c = alu_handlers.get(alu_op, ("ALU_THUMB", f"/* alu {alu_op} */"))
+                if alu_op in (0, 1, 12, 13, 14, 15):
+                    op_c = op_c.replace(f"ctx->flag_z = (ctx->r[{rd}] == 0);", f"arm_set_nz(ctx, ctx->r[{rd}]);")
+                elif alu_op == 8:
+                    op_c = f"arm_set_nz(ctx, ctx->r[{rd}] & ctx->r[{rs}]);"
                 ir_ops.append({"pc": instr_pc, "op": op_name, "c_code": op_c})
 
             # 14. SP-relative Load / Store: LDR / STR Rd, [SP, #imm8] (Format 11: 0x9000 - 0x9FFF)
@@ -417,12 +421,16 @@ class ThumbLifter:
                 is_load = bool(raw & 0x0800)
                 rb = (raw >> 8) & 0x7
                 rlist = [i for i in range(8) if (raw & (1 << i))]
-                lines = []
+                lines = [f"{{ uint32_t base = ctx->r[{rb}]; uint32_t address = base;"]
                 for r in rlist:
                     if is_load:
-                        lines.append(f"ctx->r[{r}] = mem_read32(ctx, ctx->r[{rb}]); ctx->r[{rb}] += 4;")
+                        lines.append(f"ctx->r[{r}] = mem_read32(ctx, address); address += 4;")
                     else:
-                        lines.append(f"mem_write32(ctx, ctx->r[{rb}], ctx->r[{r}]); ctx->r[{rb}] += 4;")
+                        value = "base" if r == rb else f"ctx->r[{r}]"
+                        lines.append(f"mem_write32(ctx, address, {value}); address += 4;")
+                if not is_load or rb not in rlist:
+                    lines.append(f"ctx->r[{rb}] = address;")
+                lines.append("}")
                 ir_ops.append({
                     "pc": instr_pc,
                     "op": "LDMIA" if is_load else "STMIA",
@@ -443,5 +451,12 @@ class ThumbLifter:
                         "c_code": "return 0; /* padding halt */"
                     })
                     break
+        else:
+            targets.append(pc)
+            ir_ops.append({"pc": pc, "op": "FALLTHROUGH", "c_code": f"return 0x{pc:08X}; /* instruction budget */"})
+
+        for entry in ir_ops:
+            if "ctx->r[15]" in entry["c_code"]:
+                entry["c_code"] = f"ctx->r[15] = 0x{(entry['pc'] + 4) & 0xFFFFFFFF:08X}u; " + entry["c_code"]
 
         return ir_ops, targets
