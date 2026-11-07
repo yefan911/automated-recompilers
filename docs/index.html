@@ -907,67 +907,12 @@ static uint32_t bb_80010000(MipsCpuContext *ctx) {
         return;
       }
 
-      // Generic algorithmic fallback decoders:
-      if (currentMicroArch === "arm" && cleanHex.length >= 8) {
-        const raw = parseInt(cleanHex.substring(0, 8), 16);
-        const cond = (raw >>> 28) & 0xF;
-        const op = (raw >>> 21) & 0xF;
-        const rd = (raw >>> 12) & 0xF;
-        const rn = (raw >>> 16) & 0xF;
-        const imm12 = raw & 0xFFF;
-        const rm = raw & 0xF;
-
-        if ((raw & 0x0E000000) === 0x02000000 && op === 0xD) {
-          document.getElementById("microAsmOutput").innerText = `mov r${rd}, #${imm12}`;
-          document.getElementById("microCOutput").innerText = `ctx->r[${rd}] = 0x${imm12.toString(16).padStart(8, "0")};`;
-          document.getElementById("microSemantics").innerText = `ARM7TDMI Move Immediate into register r${rd}.`;
-        } else if ((raw & 0x0E000000) === 0x00000000 && op === 0x8) {
-          document.getElementById("microAsmOutput").innerText = `add r${rd}, r${rn}, r${rm}`;
-          document.getElementById("microCOutput").innerText = `ctx->r[${rd}] = (uint32_t)(ctx->r[${rn}] + ctx->r[${rm}]);`;
-          document.getElementById("microSemantics").innerText = `ARM7TDMI 32-bit integer addition.`;
-        } else {
-          document.getElementById("microAsmOutput").innerText = `raw 0x${cleanHex}`;
-          document.getElementById("microCOutput").innerText = `/* Lowering for ARM opcode 0x${cleanHex} */\narm_execute_custom(ctx, 0x${cleanHex});`;
-          document.getElementById("microSemantics").innerText = `ARMv4T instruction decoded. Context struct: ArmCpuContext.`;
-        }
-      } else if (currentMicroArch === "thumb" && cleanHex.length >= 4) {
-        const raw = parseInt(cleanHex.substring(0, 4), 16);
-        const rTop = (raw >>> 11) & 0x1F;
-        const rd = (raw >>> 8) & 0x7;
-        const imm8 = raw & 0xFF;
-        if (rTop === 0x04) {
-          document.getElementById("microAsmOutput").innerText = `mov r${rd}, #${imm8}`;
-          document.getElementById("microCOutput").innerText = `ctx->r[${rd}] = 0x${imm8.toString(16).padStart(8, "0")};`;
-          document.getElementById("microSemantics").innerText = `Thumb Format 3: Move 8-bit immediate into low register r${rd}.`;
-        } else {
-          document.getElementById("microAsmOutput").innerText = `thumb_raw 0x${cleanHex}`;
-          document.getElementById("microCOutput").innerText = `thumb_execute(ctx, 0x${cleanHex});`;
-          document.getElementById("microSemantics").innerText = `Thumb-16 16-bit compressed instruction.`;
-        }
-      } else if (currentMicroArch === "mips" && cleanHex.length >= 8) {
-        const raw = parseInt(cleanHex.substring(0, 8), 16);
-        const op = (raw >>> 26) & 0x3F;
-        const rs = (raw >>> 21) & 0x1F;
-        const rt = (raw >>> 16) & 0x1F;
-        const imm = raw & 0xFFFF;
-        if (op === 0x0F) {
-          document.getElementById("microAsmOutput").innerText = `lui $r${rt}, 0x${imm.toString(16).padStart(4, "0")}`;
-          document.getElementById("microCOutput").innerText = `ctx->r[${rt}] = 0x${(imm << 16).toString(16).padStart(8, "0")};`;
-          document.getElementById("microSemantics").innerText = `MIPS Load Upper Immediate into register $r${rt}.`;
-        } else {
-          document.getElementById("microAsmOutput").innerText = `mips_op 0x${cleanHex}`;
-          document.getElementById("microCOutput").innerText = `mips_execute(ctx, 0x${cleanHex});`;
-          document.getElementById("microSemantics").innerText = `MIPS III (64-bit architecture) instruction.`;
-        }
-      } else if (currentMicroArch === "snes") {
-        document.getElementById("microAsmOutput").innerText = `snes_op 0x${cleanHex}`;
-        document.getElementById("microCOutput").innerText = `snes_execute(ctx, 0x${cleanHex});`;
-        document.getElementById("microSemantics").innerText = `W65C816S 24-bit banked instruction.`;
-      } else {
-        document.getElementById("microAsmOutput").innerText = `Input: 0x${cleanHex}`;
-        document.getElementById("microCOutput").innerText = `// Enter valid hex byte(s) for ${currentMicroArch.toUpperCase()}`;
-        document.getElementById("microSemantics").innerText = `Waiting for complete machine word.`;
-      }
+      const validHex = /^[0-9A-F]+$/.test(cleanHex);
+      document.getElementById("microAsmOutput").textContent = cleanHex ? `Input: 0x${cleanHex}` : 'Enter an instruction';
+      document.getElementById("microCOutput").textContent = '// Choose one of the instruction examples above.';
+      document.getElementById("microSemantics").textContent = !cleanHex
+        ? 'Select a preset or enter its hexadecimal instruction.'
+        : (validHex ? 'This instruction is outside the browser examples. Use the Python recompiler for ROM lifting.' : 'Enter hexadecimal digits (0–9, A–F); spaces and a leading 0x are allowed.');
 
       updateMicroMetadata(currentMicroArch);
     }
