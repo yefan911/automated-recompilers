@@ -191,6 +191,35 @@ def test_branch_target_wraps_to_guest_address_width():
     assert info["targets"] == [4, 4]
 
 
+def test_gte_triple_projection_packs_signed_xy_and_clamps_screen_coordinates(tmp_path, run_native):
+    data = bytearray(2048)
+    data[:8] = b"PS-X EXE"
+    struct.pack_into("<I", data, 0x10, 0x80010000)
+    struct.pack_into("<II", data, 0x18, 0x80010000, 8)
+    data.extend(struct.pack("<2I", 0x00000008, 0))
+    rom = tmp_path / "gte.exe"
+    rom.write_bytes(data)
+    source = lift_mips_rom_to_c(str(rom)).split("/* Main Entry & Win32 Presentation HAL */")[0]
+    source += '#define CHECK(expr) do { if (!(expr)) { fprintf(stderr, "Check failed at line %d: %s\\n", __LINE__, #expr); return 1; } } while (0)\n'
+    source += """
+static MipsCpuContext cpu;
+int main(void) {
+    mips_init_context(&cpu);
+    cpu.gte_ctrl[27] = 200;
+    cpu.gte_data[0] = 0xFFEC000Au; cpu.gte_data[1] = 100;
+    cpu.gte_data[2] = 0x0028FFE2u; cpu.gte_data[3] = 200;
+    cpu.gte_data[4] = 0x80007FFFu; cpu.gte_data[5] = 0;
+    gte_rtpt(&cpu);
+    CHECK(cpu.gte_data[12] == 0xFFD80014u);
+    CHECK(cpu.gte_data[13] == 0x0028FFE2u);
+    CHECK(cpu.gte_data[14] == 0xFC0003FFu);
+    CHECK(cpu.gte_data[17] == 100 && cpu.gte_data[18] == 200 && cpu.gte_data[19] == 1);
+    return 0;
+}
+"""
+    run_native(source)
+
+
 @pytest.mark.parametrize("dump_order", ["z64", "n64", "v64", "ps1"])
 def test_guest_memory_image_byte_order_and_bounds(tmp_path, run_native, dump_order):
     text_vram = 0x80000400 if dump_order != "ps1" else 0x80010000

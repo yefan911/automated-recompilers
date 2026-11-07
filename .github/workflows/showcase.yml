@@ -9,16 +9,24 @@ on:
       - "roms/**"
       - "scripts/**"
       - "docs/**"
+      - "README.md"
+      - ".github/workflows/showcase.yml"
   pull_request:
     paths:
       - "src/lifter/**"
       - "scripts/**"
+      - "docs/**"
+      - ".github/workflows/showcase.yml"
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   pages: write
   id-token: write
+
+concurrency:
+  group: showcase-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-showcase:
@@ -55,14 +63,10 @@ jobs:
       - name: Setup Pages
         if: github.ref == 'refs/heads/main'
         uses: actions/configure-pages@v5
-        continue-on-error: true
-        with:
-          enablement: true
 
       - name: Upload Pages Artifact
         if: github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v3
-        continue-on-error: true
         with:
           path: docs/
 
@@ -70,7 +74,6 @@ jobs:
     name: Deploy to GitHub Pages
     needs: build-showcase
     if: github.ref == 'refs/heads/main'
-    continue-on-error: true
     runs-on: ubuntu-latest
     environment:
       name: github-pages

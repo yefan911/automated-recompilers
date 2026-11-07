@@ -6,9 +6,9 @@ This showcase demonstrates the end-to-end Ahead-of-Time (AOT) static recompilati
 - **File:** `roms/test/hello_gba.gba`
 - **Target Console:** Game Boy Advance (GBA) (ARM7TDMI (32-bit ARM + 16-bit Thumb))
 - **Entry Vector:** `0x08000000`
-- **Discovered Basic Blocks:** **5**
+- **Discovered Basic Blocks:** **6**
 - **Total Lifted Instructions:** **20**
-- **CFG Extraction Latency:** **0.32 ms**
+- **CFG Extraction Latency:** **0.38 ms**
 
 ---
 
@@ -23,12 +23,14 @@ graph TD
     classDef term fill:#14532d,stroke:#22c55e,stroke-width:2px,color:#ffffff;
 
     bb_08000000["Entry Point<br/><b>0x08000000</b><br/>1 instructions"]:::entry
-    bb_080000C0["Block<br/><b>0x080000C0</b><br/>5 instructions"]:::block
+    bb_080000C0["Block<br/><b>0x080000C0</b><br/>4 instructions"]:::block
+    bb_080000D0["Terminal / Halt<br/><b>0x080000D0</b><br/>1 instructions"]:::term
     bb_08000100["Block<br/><b>0x08000100</b><br/>8 instructions"]:::block
     bb_0800010C["Spin / Loop Block<br/><b>0x0800010C</b><br/>5 instructions"]:::loop
     bb_08000120["Terminal / Halt<br/><b>0x08000120</b><br/>1 instructions"]:::term
 
     bb_08000000 --> bb_080000C0
+    bb_080000C0 --> bb_080000D0
     bb_080000C0 --> bb_08000100
     bb_08000100 --> bb_0800010C
     bb_08000100 --> bb_08000120
