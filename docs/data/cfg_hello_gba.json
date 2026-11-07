@@ -5,9 +5,9 @@
     "console": "Game Boy Advance (GBA)",
     "architecture": "ARM7TDMI (32-bit ARM + 16-bit Thumb)",
     "entry_vector": "0x08000000",
-    "total_blocks": 5,
+    "total_blocks": 6,
     "total_instructions": 20,
-    "lift_time_ms": 0.32
+    "lift_time_ms": 0.38
   },
   "blocks": [
     {
@@ -28,7 +28,7 @@
           "c_code": "return 0x080000C0; /* branch to 0x080000C0 */"
         }
       ],
-      "c_code": "/* Basic Block 0x08000000 - 0x08000000 */\nuint32_t bb_08000000(ArmCpuContext* ctx) {\n    (void)ctx;\n    return 0x080000C0; /* branch to 0x080000C0 */\n}\n",
+      "c_code": "/* Basic Block 0x08000000 - 0x08000000 */\nuint32_t bb_08000000(ArmCpuContext* ctx) {\n    (void)ctx;\n    return 0x080000C0; /* branch to 0x080000C0 */\n    return 0; /* bounded block fallback */\n}\n",
       "successors": [
         "0x080000C0"
       ]
@@ -36,13 +36,13 @@
     {
       "vram": "0x080000C0",
       "start_vram": 134217920,
-      "end_vram": 134217936,
+      "end_vram": 134217932,
       "func_name": "bb_080000C0",
       "is_entry": false,
       "is_terminal": false,
       "is_loop": false,
       "terminator_type": "BRANCH",
-      "instructions_count": 5,
+      "instructions_count": 4,
       "instructions": [
         {
           "pc": 134217920,
@@ -62,14 +62,32 @@
           "pc": 134217928,
           "op": "STRH",
           "rd": 1,
-          "c_code": "mem_write16(ctx, ctx->r[0], (uint16_t)ctx->r[1]);"
+          "c_code": "{ uint32_t base = ctx->r[0]; uint32_t adjusted = base + (0); uint32_t address = adjusted; mem_write16(ctx, address, (uint16_t)ctx->r[1]); }"
         },
         {
           "pc": 134217932,
           "op": "CALL",
           "target": 134217984,
-          "c_code": "ctx->r[14] = 0x080000D0;\n    recomp_call(ctx, 0x08000100);"
-        },
+          "c_code": "if (true) { ctx->r[14] = 0x080000D0; return 0x08000100; }\n    return 0x080000D0;"
+        }
+      ],
+      "c_code": "/* Basic Block 0x080000C0 - 0x080000CC */\nuint32_t bb_080000C0(ArmCpuContext* ctx) {\n    (void)ctx;\n    ctx->r[0] = 0x04000000;\n    ctx->r[1] = 0x00000403; /* loaded from 0x080000EC */\n    { uint32_t base = ctx->r[0]; uint32_t adjusted = base + (0); uint32_t address = adjusted; mem_write16(ctx, address, (uint16_t)ctx->r[1]); }\n    if (true) { ctx->r[14] = 0x080000D0; return 0x08000100; }\n    return 0x080000D0;\n    return 0; /* bounded block fallback */\n}\n",
+      "successors": [
+        "0x08000100",
+        "0x080000D0"
+      ]
+    },
+    {
+      "vram": "0x080000D0",
+      "start_vram": 134217936,
+      "end_vram": 134217936,
+      "func_name": "bb_080000D0",
+      "is_entry": false,
+      "is_terminal": true,
+      "is_loop": false,
+      "terminator_type": "BRANCH",
+      "instructions_count": 1,
+      "instructions": [
         {
           "pc": 134217936,
           "op": "BRANCH",
@@ -77,10 +95,8 @@
           "c_code": "return 0x00000000; /* infinite loop halt */"
         }
       ],
-      "c_code": "/* Basic Block 0x080000C0 - 0x080000D0 */\nuint32_t bb_080000C0(ArmCpuContext* ctx) {\n    (void)ctx;\n    ctx->r[0] = 0x04000000;\n    ctx->r[1] = 0x00000403; /* loaded from 0x080000EC */\n    mem_write16(ctx, ctx->r[0], (uint16_t)ctx->r[1]);\n    ctx->r[14] = 0x080000D0;\n    recomp_call(ctx, 0x08000100);\n    return 0x00000000; /* infinite loop halt */\n}\n",
-      "successors": [
-        "0x08000100"
-      ]
+      "c_code": "/* Basic Block 0x080000D0 - 0x080000D0 */\nuint32_t bb_080000D0(ArmCpuContext* ctx) {\n    (void)ctx;\n    return 0x00000000; /* infinite loop halt */\n    return 0; /* bounded block fallback */\n}\n",
+      "successors": []
     },
     {
       "vram": "0x08000100",
@@ -118,7 +134,7 @@
           "pc": 134217996,
           "op": "STRH",
           "rd": 2,
-          "c_code": "mem_write16(ctx, ctx->r[0], (uint16_t)ctx->r[2]);"
+          "c_code": "{ uint32_t base = ctx->r[0]; uint32_t adjusted = base + (0); uint32_t address = adjusted; mem_write16(ctx, address, (uint16_t)ctx->r[2]); }"
         },
         {
           "pc": 134218000,
@@ -136,7 +152,7 @@
           "pc": 134218008,
           "op": "SUB",
           "rd": 1,
-          "c_code": "ctx->r[1] = ctx->r[1] - 0x00000001; ctx->flag_z = (ctx->r[1] == 0);"
+          "c_code": "ctx->r[1] = arm_sub(ctx, ctx->r[1], 0x00000001, 1, true);"
         },
         {
           "pc": 134218012,
@@ -146,7 +162,7 @@
           "c_code": "if (!ctx->flag_z) return 0x0800010C;\n    else return 0x08000120;"
         }
       ],
-      "c_code": "/* Basic Block 0x08000100 - 0x0800011C */\nuint32_t bb_08000100(ArmCpuContext* ctx) {\n    (void)ctx;\n    ctx->r[0] = 0x06000000;\n    ctx->r[1] = 0x00000960; /* loaded from 0x08000128 */\n    ctx->r[2] = 0x0000001F;\n    mem_write16(ctx, ctx->r[0], (uint16_t)ctx->r[2]);\n    ctx->r[0] = ctx->r[0] + 0x00000002;\n    ctx->r[2] = ctx->r[2] + 0x00000001;\n    ctx->r[1] = ctx->r[1] - 0x00000001; ctx->flag_z = (ctx->r[1] == 0);\n    if (!ctx->flag_z) return 0x0800010C;\n    else return 0x08000120;\n}\n",
+      "c_code": "/* Basic Block 0x08000100 - 0x0800011C */\nuint32_t bb_08000100(ArmCpuContext* ctx) {\n    (void)ctx;\n    ctx->r[0] = 0x06000000;\n    ctx->r[1] = 0x00000960; /* loaded from 0x08000128 */\n    ctx->r[2] = 0x0000001F;\n    { uint32_t base = ctx->r[0]; uint32_t adjusted = base + (0); uint32_t address = adjusted; mem_write16(ctx, address, (uint16_t)ctx->r[2]); }\n    ctx->r[0] = ctx->r[0] + 0x00000002;\n    ctx->r[2] = ctx->r[2] + 0x00000001;\n    ctx->r[1] = arm_sub(ctx, ctx->r[1], 0x00000001, 1, true);\n    if (!ctx->flag_z) return 0x0800010C;\n    else return 0x08000120;\n    return 0; /* bounded block fallback */\n}\n",
       "successors": [
         "0x0800010C",
         "0x08000120"
@@ -167,7 +183,7 @@
           "pc": 134217996,
           "op": "STRH",
           "rd": 2,
-          "c_code": "mem_write16(ctx, ctx->r[0], (uint16_t)ctx->r[2]);"
+          "c_code": "{ uint32_t base = ctx->r[0]; uint32_t adjusted = base + (0); uint32_t address = adjusted; mem_write16(ctx, address, (uint16_t)ctx->r[2]); }"
         },
         {
           "pc": 134218000,
@@ -185,7 +201,7 @@
           "pc": 134218008,
           "op": "SUB",
           "rd": 1,
-          "c_code": "ctx->r[1] = ctx->r[1] - 0x00000001; ctx->flag_z = (ctx->r[1] == 0);"
+          "c_code": "ctx->r[1] = arm_sub(ctx, ctx->r[1], 0x00000001, 1, true);"
         },
         {
           "pc": 134218012,
@@ -195,7 +211,7 @@
           "c_code": "if (!ctx->flag_z) return 0x0800010C;\n    else return 0x08000120;"
         }
       ],
-      "c_code": "/* Basic Block 0x0800010C - 0x0800011C */\nuint32_t bb_0800010C(ArmCpuContext* ctx) {\n    (void)ctx;\n    mem_write16(ctx, ctx->r[0], (uint16_t)ctx->r[2]);\n    ctx->r[0] = ctx->r[0] + 0x00000002;\n    ctx->r[2] = ctx->r[2] + 0x00000001;\n    ctx->r[1] = ctx->r[1] - 0x00000001; ctx->flag_z = (ctx->r[1] == 0);\n    if (!ctx->flag_z) return 0x0800010C;\n    else return 0x08000120;\n}\n",
+      "c_code": "/* Basic Block 0x0800010C - 0x0800011C */\nuint32_t bb_0800010C(ArmCpuContext* ctx) {\n    (void)ctx;\n    { uint32_t base = ctx->r[0]; uint32_t adjusted = base + (0); uint32_t address = adjusted; mem_write16(ctx, address, (uint16_t)ctx->r[2]); }\n    ctx->r[0] = ctx->r[0] + 0x00000002;\n    ctx->r[2] = ctx->r[2] + 0x00000001;\n    ctx->r[1] = arm_sub(ctx, ctx->r[1], 0x00000001, 1, true);\n    if (!ctx->flag_z) return 0x0800010C;\n    else return 0x08000120;\n    return 0; /* bounded block fallback */\n}\n",
       "successors": [
         "0x0800010C",
         "0x08000120"
@@ -219,7 +235,7 @@
           "c_code": "return ctx->r[14]; /* bx r14 */"
         }
       ],
-      "c_code": "/* Basic Block 0x08000120 - 0x08000120 */\nuint32_t bb_08000120(ArmCpuContext* ctx) {\n    (void)ctx;\n    return ctx->r[14]; /* bx r14 */\n}\n",
+      "c_code": "/* Basic Block 0x08000120 - 0x08000120 */\nuint32_t bb_08000120(ArmCpuContext* ctx) {\n    (void)ctx;\n    return ctx->r[14]; /* bx r14 */\n    return 0; /* bounded block fallback */\n}\n",
       "successors": []
     }
   ],
@@ -229,6 +245,13 @@
       "target": "bb_080000C0",
       "source_vram": "0x08000000",
       "target_vram": "0x080000C0",
+      "is_loop": false
+    },
+    {
+      "source": "bb_080000C0",
+      "target": "bb_080000D0",
+      "source_vram": "0x080000C0",
+      "target_vram": "0x080000D0",
       "is_loop": false
     },
     {

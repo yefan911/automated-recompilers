@@ -136,7 +136,7 @@
 
     <div class="stats-grid">
       <div class="stat-card">
-        <div class="stat-val">5</div>
+        <div class="stat-val">6</div>
         <div class="stat-label">Discovered Basic Blocks</div>
       </div>
       <div class="stat-card">
@@ -144,7 +144,7 @@
         <div class="stat-label">Lifted Instructions</div>
       </div>
       <div class="stat-card">
-        <div class="stat-val">0.3 ms</div>
+        <div class="stat-val">0.4 ms</div>
         <div class="stat-label">CFG Lift Latency</div>
       </div>
       <div class="stat-card">
@@ -166,12 +166,14 @@ graph TD
     classDef term fill:#14532d,stroke:#22c55e,stroke-width:2px,color:#ffffff;
 
     bb_08000000["Entry Point<br/><b>0x08000000</b><br/>1 instructions"]:::entry
-    bb_080000C0["Block<br/><b>0x080000C0</b><br/>5 instructions"]:::block
+    bb_080000C0["Block<br/><b>0x080000C0</b><br/>4 instructions"]:::block
+    bb_080000D0["Terminal / Halt<br/><b>0x080000D0</b><br/>1 instructions"]:::term
     bb_08000100["Block<br/><b>0x08000100</b><br/>8 instructions"]:::block
     bb_0800010C["Spin / Loop Block<br/><b>0x0800010C</b><br/>5 instructions"]:::loop
     bb_08000120["Terminal / Halt<br/><b>0x08000120</b><br/>1 instructions"]:::term
 
     bb_08000000 --> bb_080000C0
+    bb_080000C0 --> bb_080000D0
     bb_080000C0 --> bb_08000100
     bb_08000100 --> bb_0800010C
     bb_08000100 --> bb_08000120

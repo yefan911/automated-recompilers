@@ -13,6 +13,8 @@ An automated static/hybrid recompilation framework that ingests video game conso
 
 The current implementation is a prototype with partial CPU and hardware coverage. It supports ROM inspection, generated C, native homebrew execution, and GBA framebuffer snapshots. Commercial game playability, full graphics, audio output, and automatic runtime mod integration remain on the [roadmap](ROADMAP.md).
 
+**[Try the browser demo](https://yefan911.github.io/automated-recompilers/)** — explore a generated control flow graph and selected hex-to-C instruction examples without installing anything. For native execution, use the bundled GBA homebrew below. If this work is useful to you, [star the repository](https://github.com/yefan911/automated-recompilers) to follow its progress.
+
 [**Quick Start**](#quick-start-in-60-seconds) • 
 [**Showcase & CFG**](docs/SHOWCASE.md) • 
 [**Opcode Coverage**](docs/OPCODE_COVERAGE.md) • 
@@ -95,13 +97,17 @@ Traditional emulators execute guest console code at runtime using an interpreter
 ![Recompiler Pipeline Terminal Walkthrough](docs/demo/recompiler_terminal_walkthrough.gif)
 
 > 📹 **Interactive HD Video Walkthrough:** [`docs/demo/recompiler_interactive_demo.webm`](docs/demo/recompiler_interactive_demo.webm)  
-> 🌐 **Interactive Web Inspector & CFG Visualizer:** Open [`docs/index.html`](docs/index.html) in your browser.
+> 🌐 **Interactive Web Inspector & CFG Visualizer:** [Open the hosted demo](https://yefan911.github.io/automated-recompilers/).
+
+![Framebuffer captured from the bundled GBA homebrew after native execution](docs/demo/homebrew_framebuffer.png)
 
 ---
 
 ## Quick Start in 60 Seconds
 
 A 100% legal, standalone homebrew test ROM (`roms/test/hello_gba.gba`) is included so you can test the pipeline immediately without commercial ROM dumps.
+
+Install Python 3.10–3.13 and a C compiler (MSVC, Clang, or GCC). The CLI uses the Python standard library; install `requirements-dev.txt` for tests, packaging, and the GUI's image previews. Packaged builds also need a C compiler to produce guest executables.
 
 ### 1. Recompile the Test ROM
 ```bash
@@ -120,6 +126,8 @@ For a bounded run and a framebuffer image:
 ```bash
 .\build\hello_gba.exe --headless --framebuffer build\hello_gba.ppm
 ```
+
+On Linux, run `./build/hello_gba.exe --headless --framebuffer build/hello_gba.ppm`. The compiler currently keeps the `.exe` filename on both platforms. Desktop presentation currently uses Win32.
 
 The bundled homebrew initializes GBA Mode 3 and writes 2,400 pixels. The PPM snapshot contains the framebuffer produced by that execution.
 
@@ -217,7 +225,7 @@ automated_recompilers/
 
 | Console | CPU Architecture | Lifter Status | Notes |
 | :--- | :--- | :--- | :--- |
-| **Game Boy Advance** | ARM7TDMI (ARMv4T) + Thumb-16 | Complete (Core) | Full ALU, memory transfers, interworking (`BX`), Mode 3 video HAL |
+| **Game Boy Advance** | ARM7TDMI (ARMv4T) + Thumb-16 | Prototype | Core ALU and memory operations, interworking (`BX`), verified Mode 3 homebrew snapshot |
 | **Nintendo 64** | MIPS III (VR4300) | In Progress | Delay slot handling, conditional branches, CFG tracing |
 | **PlayStation 1** | MIPS I (R3000A) | In Progress | MIPS I lifting, PS-X EXE detection |
 | **Super Nintendo** | W65C816S | In Progress | 24-bit banked LoROM addressing, `REP`/`SEP` register sizing |

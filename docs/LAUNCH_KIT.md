@@ -1,306 +1,80 @@
 # Automated Recompilers — Launch & Promotion Kit
 
-This kit contains copy-paste-ready announcements, technical blog posts, social media threads, and community posts to promote the repository across different platforms.
+A public demo and a reproducible native result give people a reason to explore the project and follow its progress. The project is a prototype: commercial game playability, accurate graphics, and host audio remain unfinished.
 
----
+## Start with these links
 
-## 1. Hacker News (news.ycombinator.com)
+- Browser demo: https://yefan911.github.io/automated-recompilers/
+- Repository: https://github.com/yefan911/automated-recompilers
+- Native homebrew walkthrough: https://github.com/yefan911/automated-recompilers#quick-start-in-60-seconds
+- Roadmap: https://github.com/yefan911/automated-recompilers/blob/main/ROADMAP.md
+- Contributor tasks: https://github.com/yefan911/automated-recompilers/blob/main/docs/CONTRIBUTOR_BOUNTIES.md
+- Share image: https://yefan911.github.io/automated-recompilers/demo/social-preview.png
 
-### Submission Title:
-> **Show HN: Automated Game ROM Recompiler – AOT compile console ROMs to native C**
+## Launch sequence
 
-### Submission URL:
-`https://github.com/yefan911/automated-recompilers`
+1. Keep the main branch CI green and verify that the hosted demo works on desktop and mobile. Show the bundled homebrew framebuffer and link the commands that reproduce it.
+2. Publish one technical walkthrough: why MIPS branch predicates must be captured before delay-slot execution, or how ARM/Thumb state affects CFG discovery. Include a short instruction example and a link to its native regression test.
+3. Share that walkthrough with one relevant community at a time. Respond to technical questions and record useful feedback as roadmap work. Check each community's current submission and self-promotion rules before posting.
+4. Publish a follow-up when a visible milestone lands, such as continuous studio framebuffer streaming or verified affine rendering. Show the before/after behavior and reproduction steps.
+5. Review GitHub traffic weekly: unique visitors, referring sites, clones, new stars, and contributions. Compare with the initial **19 stars on 2026-11-07**. Favor channels that bring useful technical feedback and contributors.
 
-### First Comment / Text Body:
-```markdown
-Hi HN! Over the past few months, we've seen remarkable single-game static recompilation projects (like Zelda64: Recompiled and Ship of Harkinian) demonstrate the power of Ahead-Of-Time (AOT) recompilation over traditional emulation: native 144+ FPS, zero JIT compilation stutter, instant startup, and direct hardware acceleration.
+## What the current traffic suggests
 
-However, most recompilation efforts are painstakingly hand-tuned for a single game. We wanted to see how far we could take a *generic, automated* static recompilation pipeline across multiple retro console architectures.
+GitHub's rolling 14-day snapshot on 2026-11-07 reports **331 repository views / 211 unique visitors** and **985 clones / 222 unique cloners**. Clone counts can include automation. Recorded referrals are led by `reddit.com` (**106 views / 82 uniques**) and the Reddit app (**57 / 45**), followed by GitHub (**5 / 5**). Unique visitors can overlap across referrers.
 
-We built an open-source framework that ingests binary console ROMs (GBA, N64, PS1, SNES) and translates them into standalone native C source code with an integrated hardware runtime (HAL), which is then compiled into a native `.exe` or Linux binary.
+The repository overview accounts for **280 views / 209 uniques**, while the beta release page has **5 views / 5 uniques**. Prioritize the README's direct demo and reproduction links, then share a technical progress update with the Reddit audience already finding the project. Use HN as an additional experiment once the demo is live and you can answer questions. These counts describe repository traffic, not GitHub Pages visits or star conversion.
 
-### How the Pipeline Works:
+## Show HN
 
-1. **Identification**: Scans headers, verifies checksums, resolves endianness (such as Big-Endian .z64 vs Byte-Swapped .v64), and calculates entry-point VRAM vectors.
-2. **Recursive CFG Lifting**: Disassembles machine code starting from entry vectors, recursively tracing branches, mapping subroutine targets, and detecting spin loops.
-3. **Multi-Architecture Instruction Lifters**:
-   - **ARM7TDMI & Thumb-16** (GBA): Handles ALU conditional execution, memory transfers, and ARM/Thumb state switching (`BX`).
-   - **MIPS I & III** (N64 / PS1): Resolves MIPS branch delay slots, R-type/I-type arithmetic, and jump target resolution.
-   - **W65C816S** (SNES): Handles 24-bit banked addressing and dynamic register resizing (`REP`/`SEP`).
-4. **C Code Generation**: Emits clean C functions (`bb_XXXXXXXX`) mapped to a virtual register context (`ArmCpuContext` / `MipsCpuContext`) and a unified `recomp_dispatch` trampoline.
-5. **Native Compilation & Presentation**: Invokes MSVC, Clang, or GCC to output a standalone binary with a native desktop window (Win32 GDI / Framebuffer) and zero runtime emulator dependencies.
+Use the live demo as the submission URL. [Show HN guidance](https://news.ycombinator.com/showhn.html) asks for something people can try; the browser playground and bundled homebrew provide that entry point.
 
-### Try It Immediately (100% Legal Reference Included):
-We bundle a verified, legal homebrew test ROM (`roms/test/hello_gba.gba`) so you can run the entire pipeline end-to-end without needing proprietary game dumps:
+**Title:** Show HN: Experimental ROM-to-C recompiler with a GBA homebrew demo
 
-```bash
-git clone https://github.com/yefan911/automated-recompilers.git
-cd automated-recompilers
-pip install -r requirements-dev.txt
+**URL:** https://yefan911.github.io/automated-recompilers/
 
-# Recompile the test ROM to native C and compile .exe:
-python recompile.py roms/test/hello_gba.gba
+**Opening comment:**
 
-# Run the native game window:
-.\build\hello_gba.exe --window
-```
+> I am building an experimental static recompilation framework for GBA, N64, PS1, and SNES. It follows control flow from ROM entry points, lowers selected instructions into C, and invokes a host compiler.
+>
+> The bundled GBA homebrew runs as a native executable, initializes Mode 3, and writes 2,400 pixels. The README shows how to capture its 240×160 framebuffer. The browser page includes a generated CFG and small JavaScript instruction examples; it does not run the full Python recompiler.
+>
+> CPU and hardware support are partial. Commercial game playability, accurate graphics, and host audio are still roadmap work.
+>
+> I would appreciate feedback on indirect control flow, CPU-state-dependent CFG variants, and tests that execute generated C. Source and instructions: https://github.com/yefan911/automated-recompilers
 
-We also include a dark-mode desktop GUI (`python recompile.py --ui`) and Shannon entropy visualization to map executable code segments versus compressed texture/audio blocks.
+## Compiler and reverse-engineering communities
 
-The project is fully open source under the MIT license. We would love feedback from compiler engineers, reverse engineers, and emulation enthusiasts on handling dynamic indirect jumps and expanding our ISA lifter coverage!
+For [Lobsters](https://lobste.rs/) or a relevant [r/ReverseEngineering](https://www.reddit.com/r/ReverseEngineering/) thread, lead with a specific engineering result and link to the code. Use a community account and follow its current rules.
 
-GitHub: https://github.com/yefan911/automated-recompilers
-```
+**Title:** Capturing MIPS branch state before delay slots in a ROM-to-C prototype
 
----
+**Draft:**
 
-## 2. Lobste.rs (lobste.rs)
+> A MIPS delay-slot instruction can change the register used by a branch or indirect jump. Our generated C now captures the predicate or target before executing the slot, while making call link registers visible to the slot.
+>
+> Native regression tests compile and execute examples where the slot changes a branch operand, clears a JR/JALR target, or reads the link register.
+>
+> The framework also has prototype ARM/Thumb and 65816 lifters. A bundled GBA homebrew provides a reproducible native framebuffer result; commercial game compatibility remains unfinished.
+>
+> Code and tests: https://github.com/yefan911/automated-recompilers/blob/main/tests/test_mips_semantics.py
+>
+> Demo: https://yefan911.github.io/automated-recompilers/
 
-### Submission Title:
-> **Automated static binary translation of console ROMs to standalone C99: CFG discovery, register lowering, and memory bounding**
+## Social post
 
-### URL:
-`https://github.com/yefan911/automated-recompilers`
+> ROM → control flow graph → native C.
+>
+> Explore our experimental GBA/N64/PS1/SNES recompiler and its bundled GBA homebrew result. CPU and hardware support are still partial.
+>
+> Try it: https://yefan911.github.io/automated-recompilers/
+>
+> Source: https://github.com/yefan911/automated-recompilers
 
-### Tags:
-`compilers`, `reversing`, `c`
+Attach `docs/demo/social-preview.png` or the existing terminal walkthrough GIF. For Bluesky, split the demo and source into two short posts if needed. Keep a single clear link in the first post.
 
-### Submitter Comment:
-```markdown
-We've open-sourced **Automated Game ROM Recompiler**, an Ahead-Of-Time (AOT) static binary translation framework that translates console ROM binaries (GBA ARM7TDMI/Thumb, N64/PS1 MIPS, and SNES 65816) into pure, standalone C99 source files with an integrated Hardware Abstraction Layer (HAL).
+## Contributor discovery
 
-Unlike dynamic interpreters or runtime JIT dynamic recompilers, our framework compiles the entire foreign binary Ahead-Of-Time into native host executables (`.exe` or Linux ELF) with zero JIT compilation stalls and native 144Hz+ display capabilities.
+Link newcomers to a small, currently missing instruction or a visual regression task with its expected result and test command. Check the bounty catalog against the current lifter before recommending an opcode. Submit to curated recompilation lists only when the project fits their inclusion rules, and describe its prototype status.
 
-### Systems & Compiler Engineering Notes:
-
-1. **Recursive CFG Reconstruction & Memory Safety:**
-   - Naive recursive descent disassemblers quickly encounter state explosion when traversing loops or commercial jump tables. We migrated our worklist scheduling to `collections.deque` with strict visited-block tracking, ensuring $O(1)$ block retrieval and linear queue memory.
-   - When scanning mixed directories containing massive CD tracks (e.g. 302MB PS1 bin/cue images), whole-file reads cause catastrophic RSS spikes. We bounded header detection to 128KB windows and queried sizes via `stat()`, dropping peak directory scanning memory from **301.23 MB down to 0.15 MB (a 2,000x drop)**.
-
-2. **Lowering Foreign Instruction Sets to Clean C99:**
-   - **MIPS Branch Delay Slots:** Lowered by staging delay slot operations and emitting them in exact architectural execution order prior to the branch return trampoline.
-   - **ARM / Thumb Interworking:** Register state transitions (`BX Rm`) are tracked dynamically across block boundaries to decode 32-bit ARM vs 16-bit Thumb instructions.
-   - **SNES 65816 Status Flags:** Accumulator and index register operand widths (8-bit vs 16-bit) are resolved dynamically across `REP` and `SEP` status-altering opcodes.
-
-3. **C Code Generation & Virtual Register Contexts:**
-   - Each discovered basic block lowers to an independent C function (`bb_080000C0(ArmCpuContext* ctx)`).
-   - Global dispatch is handled via a unified jump trampoline (`recomp_dispatch`), with static context structs allocated in BSS rather than stack memory to prevent 1MB stack overflow limits under deep recursion.
-
-4. **Live Visual Proof & Micro-benchmarks:**
-   - We generate live interactive Mermaid.js CFG flowcharts and Shannon entropy maps in [SHOWCASE.md](docs/SHOWCASE.md).
-   - Micro-benchmarks measure instruction throughput across lifters (achieving 4.8M to 9.1M ops/sec in Python-driven lifting).
-
-The codebase is MIT licensed: https://github.com/yefan911/automated-recompilers
-
-We'd love thoughts from compiler developers on static heuristics for resolving compiled C `switch` jump tables (`jr $at` / `ldr pc, [table]`) and ABI parameter recovery.
-```
-
----
-
-## 3. Reddit Posts
-
-### Post A: r/emulation
-**Title:**
-> **[Open Source] Automated Game ROM Recompiler: AOT-translating GBA, N64, PS1, and SNES ROMs into standalone native PC executables**
-
-**Flair:** Release / WIP
-
-**Body:**
-```markdown
-Hey everyone!
-
-Static recompilation has been transforming retro gaming recently (projects like *Ship of Harkinian*, *Zelda 64: Recompiled*, and *PS1Recomp*). The advantages over traditional emulators are huge: native performance, ultra-low input latency, no JIT cache stutter, and true native platform integration.
-
-We've been working on an open-source framework called **Automated Game ROM Recompiler** (MIT License) that aims to make this process automated and multi-console.
-
-Instead of writing a custom recompiler for one specific game, this tool provides:
-1. **Multi-ISA Lifters:** ARM7TDMI (GBA), Thumb-16, MIPS I/III (N64/PS1), and W65C816S (SNES).
-2. **Recursive CFG Tracer:** Traverses the binary from the entry vector, identifying basic blocks, branch conditions, and spin loops.
-3. **C Code Emission:** Generates standard C code with register structs and an execution trampoline.
-4. **Native Compilation:** Automatically builds a standalone `.exe` using your local C compiler (MSVC, Clang, or GCC).
-5. **Built-in Presentation HAL:** Includes a native desktop window to display the rendered pixels.
-
-### How to test it right now:
-You don't need any commercial ROMs to try it. We include a verified homebrew GBA ROM in the repo:
-```bash
-python recompile.py roms/test/hello_gba.gba
-.\build\hello_gba.exe --window
-```
-
-You can also run the desktop GUI with:
-`python recompile.py --ui`
-
-We'd love to hear your thoughts, feedback, and ideas from the community:
-👉 Repo: https://github.com/yefan911/automated-recompilers
-```
-
----
-
-### Post B: r/programming & r/ReverseEngineering
-**Title:**
-> **Automated Recompilation: Translating foreign console machine code (ARM, MIPS, 65816) into native C with recursive CFG analysis**
-
-**Body:**
-```markdown
-We've published **Automated Game ROM Recompiler**, an open-source framework exploring static ahead-of-time (AOT) binary translation for retro video game consoles.
-
-### Technical Architecture
-Unlike dynamic emulators that interpret opcodes in a fetch-decode-execute loop or compile blocks at runtime using a JIT, our recompiler parses raw console binaries at build time:
-1. **Shannon Entropy Analysis**: Generates an entropy map of the ROM to distinguish high-entropy compressed assets/tables from executable code.
-2. **Control Flow Graph (CFG) Reconstruction**: Starting at the console's reset/entry vector, basic blocks (`bb_XXXXXXXX`) are recursively mapped.
-3. **Architecture-Specific Challenges**:
-   - **MIPS Delay Slots**: Instructions in the delay slot of a branch are executed in semantic order before taking the branch target.
-   - **ARM/Thumb Interworking**: State switches via `BX` are tracked across basic blocks to decode 32-bit ARM vs 16-bit Thumb instructions.
-   - **SNES 65816 Accumulator/Index Dynamic Sizing**: Resolving 8-bit vs 16-bit operand widths controlled at runtime by `REP` and `SEP` flags.
-4. **Intermediate Representation & C Emission**: Instructions are lowered to C statements operating on an architectural context struct (`ArmCpuContext` / `MipsCpuContext`), compiled cleanly with `-Wall -Wextra -Werror`.
-
-Check out the code, architecture documents, and test cases:
-GitHub: https://github.com/yefan911/automated-recompilers
-```
-
----
-
-## 3. Publication-Ready Technical Blog Post (Dev.to / Medium / Substack)
-
-### Title:
-# Inside an Automated Console Recompiler: Ahead-of-Time Translating ROMs to Native C
-
-**Subtitle:** *Why static recompilation is replacing traditional emulation, and how we built an automated pipeline for GBA, N64, PS1, and SNES.*
-
----
-
-### The Emulation Problem
-For over thirty years, playing console video games on PCs has relied on emulation. Emulators simulate hardware at runtime in one of two ways:
-1. **Interpretation:** An infinite loop that reads an opcode, switches on it, updates emulated registers, and repeats. This is accurate but slow.
-2. **Just-In-Time (JIT) Compilation:** Blocks of guest machine code are translated into host machine code on the fly as they are executed. While fast, JITs introduce micro-stutter when new code blocks are encountered, require executable memory pages (`W^X` issues on modern platforms), and carry high runtime complexity.
-
-### The New Paradigm: Static AOT Recompilation
-Recently, the retro gaming world was stunned by projects like *Ship of Harkinian* (Nintendo 64) and *PS1Recomp* (PlayStation 1). These projects demonstrated that you can statically translate a game's machine code into native C or C++ **Ahead-Of-Time (AOT)**. 
-
-Once recompiled:
-- The game runs as a native PC binary (`.exe`).
-- CPU utilization drops to negligible levels.
-- Frame rates are unlocked from ancient console bottlenecks.
-- Modding, widescreen rendering, and asset replacement become native C modifications.
-
-However, existing recompilers are mostly built by hand for specific games. We set out to answer a question: **Can we build a unified, automated static recompilation framework for multiple retro consoles?**
-
-Here is how our framework works.
-
----
-
-### Stage 1: Identification & Header Analysis
-Before disassembling anything, the recompiler must inspect the ROM structure. Each console has its own peculiarities:
-- **Nintendo 64 ROMs** exist in three different byte-orders depending on the dump tool: Big-Endian (`.z64`), Byte-Swapped (`.v64`), or Little-Endian (`.n64`).
-- **GBA ROMs** contain fixed Nintendo logo checksums and an entry branch at `0x08000000`.
-- **SNES ROMs** use banked mapping systems (LoROM vs. HiROM) where internal headers live at either offset `0x7FB0` or `0xFFB0`.
-
-Our detector module (`src/core/rom_detector.py`) normalizes byte orders, verifies checksums, and calculates the exact entry vector.
-
----
-
-### Stage 2: Recursive Control Flow Graph (CFG) Construction
-A naive linear sweep across a ROM fails because consoles interleave executable code with raw assets (palettes, tiles, audio samples). If a disassembler tries to decode a compressed texture as MIPS or ARM code, it produces invalid instructions.
-
-Instead, we use **Recursive CFG Analysis** (`src/lifter/cfg.py`):
-1. Begin tracing strictly from known entry vectors (the reset vector).
-2. Follow execution instruction-by-instruction.
-3. When a branch or jump is encountered, create a **Basic Block** boundary.
-4. Recursively enqueue the branch target address and the fall-through address.
-5. Stop tracing along paths that hit terminal operations (`BX LR`, infinite halt loops).
-
----
-
-### Stage 3: Architecture Lifters (ARM, MIPS, 65816)
-Each processor architecture is lifted into intermediate C statements:
-
-#### 1. MIPS Delay Slots (N64 / PS1)
-In classic MIPS architecture, the instruction immediately following a jump or branch is executed *before* the branch is taken. In our lifter:
-```python
-# MIPS branch: Delay slot executed before jump
-ir_ops.append(lift_delay_slot(pc + 4))
-ir_ops.append({"op": "BNE", "c_code": f"if (ctx->r[{rs}] != ctx->r[{rt}]) {{ return {target}; }}"})
-```
-
-#### 2. ARM / Thumb Interworking (GBA)
-The Game Boy Advance uses an ARM7TDMI processor that dynamically switches between 32-bit ARM mode and 16-bit Thumb mode using the `BX` (Branch and Exchange) instruction:
-```c
-// Emitted C for BX state exchange:
-if (ctx->r[rm] & 1) {
-    ctx->thumb_mode = 1;
-    target_pc = ctx->r[rm] & ~1;
-} else {
-    ctx->thumb_mode = 0;
-    target_pc = ctx->r[rm] & ~3;
-}
-```
-
----
-
-### Stage 4: Emitting C & Compiling the Binary
-Each discovered basic block becomes a distinct, optimize-friendly C function:
-```c
-/* Basic Block at 0x08000020 */
-static uint32_t bb_08000020(ArmCpuContext *ctx) {
-    ctx->r[0] = (uint32_t)(ctx->r[0] - 1);  /* SUBS r0, r0, #1 */
-    if (ctx->r[0] != 0) {
-        return 0x08000020;                  /* BNE loop */
-    }
-    return 0x08000028;
-}
-```
-
-A central dispatch trampoline (`recomp_dispatch`) executes blocks in a fast switch loop until execution terminates.
-
-The pipeline then invokes the host C compiler (Visual Studio MSVC, Clang, or GCC) with optimization flags (`-O2`), producing a native executable with a built-in Win32 presentation layer.
-
----
-
-### How You Can Get Involved
-The project is completely open source under the MIT License on GitHub:
-👉 **https://github.com/yefan911/automated-recompilers**
-
-We are actively working on:
-- Expanded instruction coverage for MIPS coprocessors and SNES 65816 addressing modes.
-- SDL2 / Vulkan cross-platform HAL backends for Linux and macOS.
-- Dynamic jump table heuristic analysis.
-
-Star the repo, check out the code, and join us in building the next generation of video game preservation tools!
-
----
-
-## 4. Social Media Announcement (X / Twitter & Bluesky Thread)
-
-**Tweet 1 (The Hook):**
-> What if you could take ANY retro console ROM (GBA, N64, PS1, SNES) and turn it into a standalone native PC `.exe` with zero emulator overhead?
-> 
-> We're building **Automated Game ROM Recompiler** — an open-source AOT static recompilation framework.
-> 
-> 🧵 Here's how it works 👇
-
-**Tweet 2 (The Difference):**
-> Traditional emulators interpret or JIT-compile foreign machine code at runtime.
-> 
-> Our recompiler translates foreign binaries into native C Ahead-Of-Time (AOT) using recursive CFG analysis, then compiles directly with MSVC/Clang/GCC into a high-performance native app.
-
-**Tweet 3 (Under the Hood):**
-> The pipeline handles:
-> 🕹️ Multi-ISA Lifters (ARM7TDMI, Thumb-16, MIPS I/III, 65816)
-> 🔄 MIPS delay slot resolution & ARM/Thumb state switching
-> 📊 Shannon entropy maps to detect code vs compressed textures
-> 🖥️ Native desktop presentation window
-
-**Tweet 4 (Visuals & Verification):**
-> It includes an interactive desktop GUI and a 100% legal homebrew GBA test ROM so you can recompile and run your first game in 60 seconds with zero proprietary ROMs required.
-> 
-> 📹 Watch the 4-stage pipeline in action:
-> docs/demo/recompiler_terminal_walkthrough.gif
-> docs/demo/recompiler_interactive_demo.webm
-
-**Tweet 5 (Call to Action):**
-> 100% Open Source (MIT):
-> ⭐ Star the repo & check out the roadmap:
-> https://github.com/yefan911/automated-recompilers
-> 
-> #retrogaming #emulation #gamedev #reverseengineering #systems
+Use stars as a signal of interest. Good documentation, working examples, useful releases, and responsive technical discussion are the ongoing work that makes following the repository worthwhile.

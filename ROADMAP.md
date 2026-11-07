@@ -2,9 +2,11 @@
 
 This document outlines the development milestones, architecture targets, and task assignments for the **Automated Game ROM Recompiler**.
 
-## Current implementation status — 2026-11-06
+## Current implementation status — 2026-11-07
 
-The framework provides ROM inspection, static C generation, and prototype runtimes. The audit on `fix/recompiler-baseline` passes **199 tests on Windows/Python 3.13**, including generated C execution for instruction semantics, cartridge reads, memory bounds, modding helpers, and failure handling. Validation results and the handoff are recorded in [COORDINATION.md](COORDINATION.md).
+The framework provides ROM inspection, static C generation, and prototype runtimes. The baseline audit was merged in **PR #19**. Current local validation passes **200 tests on Windows/Python 3.13**, including generated C execution for instruction semantics, cartridge reads, memory bounds, modding helpers, failure handling, and packed PS1 GTE screen coordinates. CI now covers Python 3.10–3.13 on Ubuntu and Windows. Validation results and the handoff are recorded in [COORDINATION.md](COORDINATION.md).
+
+The [public browser demo](https://yefan911.github.io/automated-recompilers/) loads the bundled GBA homebrew's generated CFG and selectable C blocks. It also provides selected JavaScript instruction examples and the native framebuffer result. Repository topics, demo links, social preview assets, and a focused [launch kit](docs/LAUNCH_KIT.md) support community discovery.
 
 The studio viewport displays ROM data and native GBA framebuffer snapshots. Continuous guest framebuffer streaming into the studio, accurate graphics across all consoles, host audio, and commercial game playability remain open work. Opcode coverage measures recognized instructions; architectural behavior is checked separately by executing generated C.
 
@@ -86,6 +88,8 @@ The table records team domains for work that can be assigned to in-terminal suba
   - FIFO A register storage is present. FIFO B, DMA scheduling, mixing, and host audio output remain to be connected.
 
 ### Track D: SNES Mode 7 & SPC700 Sound APU (Coworker 54)
+- [x] **Generated GBA CFG Browser Explorer**:
+  - Load exported homebrew CFG JSON, inspect individual generated C blocks, and retain independent console/example selections. Other console tabs contain illustrative examples.
 - [ ] **SNES Mode 7 Affine Matrix Rendering**:
   - Mode 7 perspective scaling and rotation matrix calculation for racing and world-map games.
 - [x] **Prototype SPC700 Communication Ports**:
