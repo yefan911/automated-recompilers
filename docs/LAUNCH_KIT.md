@@ -19,6 +19,12 @@ A public demo and a reproducible native result give people a reason to explore t
 4. Publish a follow-up when a visible milestone lands, such as continuous studio framebuffer streaming or verified affine rendering. Show the before/after behavior and reproduction steps.
 5. Review GitHub traffic weekly: unique visitors, referring sites, clones, new stars, and contributions. Compare with the initial **19 stars on 2026-11-07**. Favor channels that bring useful technical feedback and contributors.
 
+## What the current traffic suggests
+
+GitHub's rolling 14-day snapshot on 2026-11-07 reports **331 repository views / 211 unique visitors** and **985 clones / 222 unique cloners**. Clone counts can include automation. Recorded referrals are led by `reddit.com` (**106 views / 82 uniques**) and the Reddit app (**57 / 45**), followed by GitHub (**5 / 5**). Unique visitors can overlap across referrers.
+
+The repository overview accounts for **280 views / 209 uniques**, while the beta release page has **5 views / 5 uniques**. Prioritize the README's direct demo and reproduction links, then share a technical progress update with the Reddit audience already finding the project. Use HN as an additional experiment once the demo is live and you can answer questions. These counts describe repository traffic, not GitHub Pages visits or star conversion.
+
 ## Show HN
 
 Use the live demo as the submission URL. [Show HN guidance](https://news.ycombinator.com/showhn.html) asks for something people can try; the browser playground and bundled homebrew provide that entry point.
