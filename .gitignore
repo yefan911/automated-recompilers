@@ -13,6 +13,8 @@ __pycache__/
 *.out
 dist/
 build/pyinstaller/
+build/social/
+social-state/
 
 # Python virtual environments
 .venv/

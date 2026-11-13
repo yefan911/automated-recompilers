@@ -1,0 +1,100 @@
+name: Release Announcements
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag (blank uses latest stable release)
+        type: string
+      publish:
+        description: Publish through the configured project account
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: social-announcements
+  cancel-in-progress: false
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      SOCIAL_PROVIDER: ${{ vars.SOCIAL_PROVIDER }}
+      SOCIAL_ACCOUNT: ${{ vars.SOCIAL_ACCOUNT }}
+      BLUESKY_HANDLE: ${{ vars.BLUESKY_HANDLE }}
+      BLUESKY_SERVICE: ${{ vars.BLUESKY_SERVICE || 'https://bsky.social' }}
+      MASTODON_SERVER: ${{ vars.MASTODON_SERVER }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      POST_LIVE: ${{ vars.SOCIAL_POSTING_ENABLED == 'true' && vars.SOCIAL_PROVIDER != '' && (github.event_name == 'release' || inputs.publish) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Prepare announcement
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/social_announcements.py preview --event-file "$GITHUB_EVENT_PATH" --tag "$RELEASE_TAG"
+      - name: Upload preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-announcement-preview
+          path: build/social/announcement.json
+      - name: Open persistent posting ledger
+        if: env.POST_LIVE == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin social-posting-state > /dev/null; then
+            git fetch origin social-posting-state
+            git worktree add social-state FETCH_HEAD
+            git -C social-state checkout -b social-posting-state
+          else
+            git worktree add --detach social-state HEAD
+            git -C social-state checkout --orphan social-posting-state
+            git -C social-state rm -rf .
+            mkdir -p social-state/receipts
+            touch social-state/receipts/.gitkeep
+            git -C social-state add receipts/.gitkeep
+            git -C social-state commit -m "Initialize announcement posting ledger"
+            git -C social-state push origin HEAD:refs/heads/social-posting-state
+          fi
+      - name: Reserve this release for this destination
+        id: reserve
+        if: env.POST_LIVE == 'true'
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          python scripts/social_announcements.py reserve
+          git -C social-state add receipts
+          if ! git -C social-state diff --cached --quiet --exit-code; then
+            git -C social-state commit -m "Reserve release announcement"
+            git -C social-state push origin HEAD:refs/heads/social-posting-state
+          fi
+      - name: Publish announcement
+        id: publish
+        if: env.POST_LIVE == 'true' && steps.reserve.outputs.reserved == 'true'
+        env:
+          BLUESKY_APP_PASSWORD: ${{ secrets.BLUESKY_APP_PASSWORD }}
+          MASTODON_ACCESS_TOKEN: ${{ secrets.MASTODON_ACCESS_TOKEN }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python scripts/social_announcements.py send
+      - name: Save posting receipt
+        if: always() && env.POST_LIVE == 'true' && steps.reserve.outputs.reserved == 'true'
+        run: |
+          if ! git -C social-state diff --quiet --exit-code -- receipts; then
+            git -C social-state add receipts
+            git -C social-state commit -m "Record announcement result"
+            git -C social-state push origin HEAD:refs/heads/social-posting-state
+          fi

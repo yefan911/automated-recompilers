@@ -63,6 +63,8 @@ For [Lobsters](https://lobste.rs/) or a relevant [r/ReverseEngineering](https://
 
 ## Social post
 
+For release-driven publishing through a project account or channel, see [Automated Project Announcements](AUTOMATED_POSTING.md).
+
 > ROM → control flow graph → native C.
 >
 > Explore our experimental GBA/N64/PS1/SNES recompiler and its bundled GBA homebrew result. CPU and hardware support are still partial.
