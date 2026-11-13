@@ -16,6 +16,7 @@ The current implementation is a prototype with partial CPU and hardware coverage
 **[Try the browser demo](https://yefan911.github.io/automated-recompilers/)** — explore a generated control flow graph and selected hex-to-C instruction examples without installing anything. For native execution, use the bundled GBA homebrew below. If this work is useful to you, [star the repository](https://github.com/yefan911/automated-recompilers) to follow its progress.
 
 [**Quick Start**](#quick-start-in-60-seconds) • 
+[**Console Compatibility**](docs/COMPATIBILITY.md) •
 [**Showcase & CFG**](docs/SHOWCASE.md) • 
 [**Opcode Coverage**](docs/OPCODE_COVERAGE.md) • 
 [**Benchmarks**](docs/BENCHMARKS.md) • 
